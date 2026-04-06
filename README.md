@@ -5,21 +5,28 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
 ## 🚀 Features
 
 -   **Watch Face**:
-    -   12-hour time with a smooth seconds arc.
+    -   12-hour time with a smooth seconds arc and sun/moon AM/PM icon.
     -   Gregorian and Islamic (Hijri) date display.
     -   WiFi connectivity and current weather summary.
+    -   Manual time/date setting via SETTINGS button when WiFi is unavailable.
 -   **Weather Dashboard**:
     -   Current temperature, "feels like", humidity, and wind speed with weather condition icon.
     -   3-day forecast with weather icons and daily highs/lows.
     -   Powered by the Open-Meteo API (no API key required).
 -   **Timer & Utilities**:
-    -   **Analog Clock**: NTP-synced analog clock face with hour/minute/second hands, hour numbers, and compact Gregorian and Hijri date display.
+    -   **Analog Clock**: NTP-synced analog clock face with hour/minute/second hands, hour numbers, sun/moon icon, and compact Gregorian and Hijri date display.
     -   **Alarm**: Configurable alarm with an interactive settings menu and buzzer chime.
     -   **Stopwatch**: High-precision stopwatch with millisecond display. Start/stop with SETTINGS button, long-press SETTINGS to reset when stopped.
+-   **Pomodoro Timer**:
+    -   Configurable work/break intervals (default 25m/5m).
+    -   Visual progress arc (red for work, green for break).
+    -   Auto-transitions between work and break with distinct melodies.
+    -   NEXT to start/stop, BACK to reset, SETTINGS to configure, hold BACK to exit.
 -   **Audio Feedback**:
     -   Gentle startup melody (ascending G major arpeggio).
     -   Unique chimes for each button action.
     -   Alert melody for the alarm.
+    -   Pomodoro break start (descending) and break end (ascending) melodies.
 -   **Connectivity**:
     -   Automatic WiFi connection for NTP time synchronization and weather fetching.
     -   Dynamic updates for weather data every 10 minutes.
@@ -73,9 +80,9 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
 
 ## 🎮 Controls
 
--   **NEXT**: Cycle through all screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Watch. In alarm settings, adjusts values.
--   **SETTINGS**: Enter/edit alarm settings, or start/stop the stopwatch. Long-press (1s) to reset the stopwatch when stopped.
--   **BACK**: Navigate to the previous screen. In alarm settings, exits the settings menu.
+-   **NEXT**: Cycle through all screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Pomodoro → Watch. Adjusts values in settings.
+-   **SETTINGS**: Enter/edit alarm settings, start/stop the stopwatch (long-press to reset), configure Pomodoro, or set time/date manually on the watch face (when WiFi is disconnected).
+-   **BACK**: Navigate to the previous screen, reset Pomodoro, or exit settings. Long-press (1s) to exit Pomodoro to the watch face.
 
 ## 📜 License
 

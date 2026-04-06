@@ -59,7 +59,7 @@ TFT_eSprite spr = TFT_eSprite(&tft);
 #define COL_TEAL       0x0410
 
 // ── Screen State ────────────────────────────────────────────────
-enum Screen { SCREEN_CLOCK = 0, SCREEN_WEATHER, SCREEN_TIMER, SCREEN_COUNT };
+enum Screen { SCREEN_CLOCK = 0, SCREEN_WEATHER, SCREEN_TIMER, SCREEN_POMODORO, SCREEN_COUNT };
 Screen currentScreen = SCREEN_CLOCK;
 
 // ── Button Debounce ─────────────────────────────────────────────
@@ -114,6 +114,34 @@ void chimeAlarm() {
     }
 }
 
+// Pomodoro: time for a break — pleasant descending melody
+void chimeBreakStart() {
+    buzzerTone(1047, 150); // C6
+    delay(30);
+    buzzerTone(988, 150);  // B5
+    delay(30);
+    buzzerTone(784, 150);  // G5
+    delay(30);
+    buzzerTone(659, 200);  // E5
+    delay(50);
+    buzzerTone(523, 300);  // C5 — resolve, held long
+}
+
+// Pomodoro: break over — energetic ascending fanfare
+void chimeBreakEnd() {
+    buzzerTone(523, 100);  // C5
+    delay(20);
+    buzzerTone(659, 100);  // E5
+    delay(20);
+    buzzerTone(784, 100);  // G5
+    delay(20);
+    buzzerTone(1047, 150); // C6
+    delay(40);
+    buzzerTone(1319, 150); // E6
+    delay(40);
+    buzzerTone(1568, 250); // G6 — bright finish
+}
+
 // ── Weather Data ────────────────────────────────────────────────
 struct WeatherData {
     float temp;
@@ -150,6 +178,23 @@ bool alarmTriggered = false;
 // ── Timer Screen Sub-modes ──────────────────────────────────────
 enum TimerMode { TIMER_CLOCK = 0, TIMER_ALARM, TIMER_STOPWATCH, TIMER_MODE_COUNT };
 TimerMode timerMode = TIMER_CLOCK;
+
+// ── Pomodoro ───────────────────────────────────────────────────
+int pomoWorkMin = 25;
+int pomoBreakMin = 5;
+enum PomoState { POMO_IDLE, POMO_WORK, POMO_BREAK };
+PomoState pomoState = POMO_IDLE;
+bool pomoRunning = false;
+unsigned long pomoTimeLeft = 0;   // ms remaining in current phase
+unsigned long pomoLastTick = 0;   // last millis() snapshot for countdown
+bool pomoInSettings = false;
+int pomoField = 0;               // 0=work, 1=break
+bool pomoEditing = false;
+
+// ── Clock Manual Time Setting (when WiFi unavailable) ──────────
+bool clockInSettings = false;
+int clockField = 0; // 0=hour, 1=min, 2=month, 3=day, 4=year
+int clockSetHour, clockSetMin, clockSetMonth, clockSetDay, clockSetYear;
 
 // ── Settings State ──────────────────────────────────────────────
 bool inSettings = false;
@@ -453,8 +498,10 @@ void drawCircleBorder() {
 }
 
 void drawScreenIndicator(int active) {
-    for (int i = 0; i < 3; i++) {
-        int x = 108 + i * 12;
+    int count = SCREEN_COUNT;
+    int startX = 120 - (count - 1) * 6; // center the dots
+    for (int i = 0; i < count; i++) {
+        int x = startX + i * 12;
         int y = 228;
         if (i == active) {
             spr.fillCircle(x, y, 4, COL_CYAN);
@@ -462,6 +509,27 @@ void drawScreenIndicator(int active) {
             spr.drawCircle(x, y, 3, COL_DARK_GRAY);
         }
     }
+}
+
+// ── Helper: days in month ───────────────────────────────────────
+int daysInMonth(int month, int year) {
+    const int d[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) return 29;
+    return d[month - 1];
+}
+
+// ── Helper: apply manual time setting ──────────────────────────
+void applyClockSettings() {
+    struct tm tm = {};
+    tm.tm_hour = clockSetHour;
+    tm.tm_min  = clockSetMin;
+    tm.tm_sec  = 0;
+    tm.tm_mon  = clockSetMonth - 1;
+    tm.tm_mday = clockSetDay;
+    tm.tm_year = clockSetYear - 1900;
+    time_t epoch = mktime(&tm);
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    settimeofday(&tv, NULL);
 }
 
 // ── Screen 1: Clock Face ────────────────────────────────────────
@@ -472,13 +540,86 @@ void drawClockScreen() {
     spr.fillSprite(COL_BG);
     drawCircleBorder();
     drawScreenIndicator(0);
+    spr.setTextDatum(MC_DATUM);
 
+    if (clockInSettings) {
+        // ── Manual time/date setting screen ──
+        spr.setTextColor(COL_WHITE, COL_BG);
+        spr.drawString("Set Time & Date", 120, 25, 2);
+
+        const char* labels[] = {"Hour", "Minute", "Month", "Day", "Year"};
+        int values[] = {clockSetHour, clockSetMin, clockSetMonth, clockSetDay, clockSetYear};
+
+        // Time row: HH : MM
+        char hBuf[3], mBuf[3];
+        sprintf(hBuf, "%02d", clockSetHour);
+        sprintf(mBuf, "%02d", clockSetMin);
+
+        spr.setTextColor(clockField == 0 ? COL_GREEN : COL_WHITE, COL_BG);
+        spr.drawString(hBuf, 90, 70, 7);
+        spr.setTextColor(COL_MID_GRAY, COL_BG);
+        spr.drawString(":", 120, 65, 6);
+        spr.setTextColor(clockField == 1 ? COL_GREEN : COL_WHITE, COL_BG);
+        spr.drawString(mBuf, 150, 70, 7);
+
+        // Date row
+        const char* monthNames[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                    "Jul","Aug","Sep","Oct","Nov","Dec"};
+        char dateBuf[20];
+        sprintf(dateBuf, "%s %d, %d", monthNames[clockSetMonth - 1], clockSetDay, clockSetYear);
+
+        // Highlight active date field
+        if (clockField == 2) {
+            spr.setTextColor(COL_GREEN, COL_BG);
+            spr.drawString(monthNames[clockSetMonth - 1], 65, 120, 4);
+            spr.setTextColor(COL_WHITE, COL_BG);
+            char restBuf[12];
+            sprintf(restBuf, "%d, %d", clockSetDay, clockSetYear);
+            spr.drawString(restBuf, 155, 120, 4);
+        } else if (clockField == 3) {
+            spr.setTextColor(COL_WHITE, COL_BG);
+            spr.drawString(monthNames[clockSetMonth - 1], 65, 120, 4);
+            spr.setTextColor(COL_GREEN, COL_BG);
+            char dayBuf[3];
+            sprintf(dayBuf, "%d", clockSetDay);
+            spr.drawString(dayBuf, 120, 120, 4);
+            spr.setTextColor(COL_WHITE, COL_BG);
+            char yrBuf[6];
+            sprintf(yrBuf, "%d", clockSetYear);
+            spr.drawString(yrBuf, 175, 120, 4);
+        } else if (clockField == 4) {
+            spr.setTextColor(COL_WHITE, COL_BG);
+            char preBuf[10];
+            sprintf(preBuf, "%s %d,", monthNames[clockSetMonth - 1], clockSetDay);
+            spr.drawString(preBuf, 90, 120, 4);
+            spr.setTextColor(COL_GREEN, COL_BG);
+            char yrBuf[6];
+            sprintf(yrBuf, "%d", clockSetYear);
+            spr.drawString(yrBuf, 175, 120, 4);
+        } else {
+            spr.setTextColor(COL_WHITE, COL_BG);
+            spr.drawString(dateBuf, 120, 120, 4);
+        }
+
+        // Active field label
+        spr.setTextColor(COL_YELLOW, COL_BG);
+        char fieldLabel[20];
+        sprintf(fieldLabel, "< > %s", labels[clockField]);
+        spr.drawString(fieldLabel, 120, 160, 2);
+
+        spr.setTextColor(COL_MID_GRAY, COL_BG);
+        spr.drawString("SET=Field NEXT=+ BACK=Done", 120, 195, 1);
+
+        spr.pushSprite(0, 0);
+        return;
+    }
+
+    // ── Normal clock face ──
     // Time — large centered
     char timeBuf[6];
     int hour12 = t.tm_hour % 12;
     if (hour12 == 0) hour12 = 12;
     sprintf(timeBuf, "%d:%02d", hour12, t.tm_min);
-    spr.setTextDatum(MC_DATUM);
     spr.setTextColor(COL_WHITE, COL_BG);
     spr.drawString(timeBuf, 115, 65, 7);
 
@@ -804,8 +945,257 @@ void drawTimerScreen() {
     spr.pushSprite(0, 0);
 }
 
+// ── Screen 4: Pomodoro Timer ───────────────────────────────────
+void drawPomodoroScreen() {
+    spr.fillSprite(COL_BG);
+    drawCircleBorder();
+    drawScreenIndicator(3);
+
+    spr.setTextDatum(MC_DATUM);
+
+    if (pomoInSettings) {
+        // ── Settings screen ──
+        spr.setTextColor(COL_WHITE, COL_BG);
+        spr.drawString("Pomodoro Setup", 120, 35, 2);
+
+        const char* labels[] = {"Work (min)", "Break (min)"};
+        int values[] = {pomoWorkMin, pomoBreakMin};
+
+        for (int i = 0; i < 2; i++) {
+            int y = 75 + i * 70;
+            bool selected = (pomoField == i);
+            bool editing = selected && pomoEditing;
+
+            spr.setTextColor(selected ? COL_CYAN : COL_MID_GRAY, COL_BG);
+            spr.drawString(labels[i], 120, y, 2);
+
+            char valBuf[5];
+            sprintf(valBuf, "%d", values[i]);
+            if (editing) {
+                spr.setTextColor(COL_GREEN, COL_BG);
+                spr.drawString("<", 70, y + 28, 4);
+                spr.drawString(">", 170, y + 28, 4);
+            }
+            spr.setTextColor(editing ? COL_GREEN : (selected ? COL_WHITE : COL_MID_GRAY), COL_BG);
+            spr.drawString(valBuf, 120, y + 28, 4);
+        }
+
+        spr.setTextColor(COL_MID_GRAY, COL_BG);
+        if (pomoEditing) {
+            spr.drawString("BACK=- NEXT=+ SET=Confirm", 120, 205, 1);
+        } else {
+            spr.drawString("NEXT=Field SET=Edit BACK=Done", 120, 205, 1);
+        }
+
+        spr.pushSprite(0, 0);
+        return;
+    }
+
+    // ── Main Pomodoro display ──
+    // Title with state
+    const char* stateLabel;
+    uint16_t stateCol;
+    if (pomoState == POMO_WORK) {
+        stateLabel = "WORK";
+        stateCol = COL_RED;
+    } else if (pomoState == POMO_BREAK) {
+        stateLabel = "BREAK";
+        stateCol = COL_GREEN;
+    } else {
+        stateLabel = "Pomodoro";
+        stateCol = COL_WHITE;
+    }
+    spr.setTextColor(stateCol, COL_BG);
+    spr.drawString(stateLabel, 120, 40, 4);
+
+    // Countdown
+    unsigned long displayMs = pomoTimeLeft;
+    if (pomoState == POMO_IDLE) {
+        displayMs = (unsigned long)pomoWorkMin * 60000UL;
+    }
+    int totalSec = displayMs / 1000;
+    int dispMin = totalSec / 60;
+    int dispSec = totalSec % 60;
+
+    char timeBuf[6];
+    sprintf(timeBuf, "%02d:%02d", dispMin, dispSec);
+    spr.setTextColor(pomoRunning ? stateCol : COL_WHITE, COL_BG);
+    spr.drawString(timeBuf, 120, 90, 7);
+
+    // Progress arc
+    if (pomoState != POMO_IDLE) {
+        unsigned long totalMs = (pomoState == POMO_WORK)
+            ? (unsigned long)pomoWorkMin * 60000UL
+            : (unsigned long)pomoBreakMin * 60000UL;
+        float progress = 1.0f - (float)pomoTimeLeft / (float)totalMs;
+        int dots = (int)(progress * 60);
+        uint16_t arcCol = (pomoState == POMO_WORK) ? COL_RED : COL_GREEN;
+        for (int s = 0; s < dots; s++) {
+            float a = s * 6.0 - 90.0;
+            float rad = a * DEG_TO_RAD;
+            int px = 120 + (int)(105 * cos(rad));
+            int py = 120 + (int)(105 * sin(rad));
+            spr.fillCircle(px, py, 2, arcCol);
+        }
+    }
+
+    // Status text
+    spr.setTextColor(COL_MID_GRAY, COL_BG);
+    if (pomoState == POMO_IDLE) {
+        char infoBuf[20];
+        sprintf(infoBuf, "%dm work / %dm break", pomoWorkMin, pomoBreakMin);
+        spr.drawString(infoBuf, 120, 130, 2);
+        spr.drawString("NEXT=Start SET=Config", 120, 175, 1);
+        spr.drawString("BACK=Reset  Hold BACK=Exit", 120, 190, 1);
+    } else {
+        spr.drawString(pomoRunning ? "Running" : "Paused", 120, 130, 2);
+        spr.drawString("NEXT=Start/Stop", 120, 175, 1);
+        spr.drawString("BACK=Reset  Hold BACK=Exit", 120, 190, 1);
+    }
+
+    spr.pushSprite(0, 0);
+}
+
+void updatePomodoro() {
+    if (!pomoRunning || pomoState == POMO_IDLE) return;
+
+    unsigned long now = millis();
+    unsigned long delta = now - pomoLastTick;
+    pomoLastTick = now;
+
+    if (delta >= pomoTimeLeft) {
+        pomoTimeLeft = 0;
+        pomoRunning = false;
+
+        if (pomoState == POMO_WORK) {
+            // Work done — switch to break
+            pomoState = POMO_BREAK;
+            pomoTimeLeft = (unsigned long)pomoBreakMin * 60000UL;
+            pomoLastTick = millis();
+            pomoRunning = true;
+            chimeBreakStart();
+        } else {
+            // Break done — back to idle
+            pomoState = POMO_IDLE;
+            chimeBreakEnd();
+        }
+    } else {
+        pomoTimeLeft -= delta;
+    }
+}
+
 // ── Handle Button Actions ───────────────────────────────────────
 void handleButtons() {
+    // ── Clock settings (manual time/date when no WiFi) ──
+    if (clockInSettings) {
+        if (buttons[1].pressed) {  // SETTINGS — cycle field
+            chimeSettings();
+            clockField = (clockField + 1) % 5;
+        }
+        if (buttons[2].pressed) {  // NEXT — increment
+            chimeNext();
+            switch (clockField) {
+                case 0: clockSetHour = (clockSetHour + 1) % 24; break;
+                case 1: clockSetMin = (clockSetMin + 1) % 60; break;
+                case 2: clockSetMonth = (clockSetMonth % 12) + 1; break;
+                case 3:
+                    clockSetDay = (clockSetDay % daysInMonth(clockSetMonth, clockSetYear)) + 1;
+                    break;
+                case 4: clockSetYear++; break;
+            }
+        }
+        if (buttons[0].pressed) {  // BACK — exit and apply
+            chimeBack();
+            applyClockSettings();
+            clockInSettings = false;
+        }
+        return;
+    }
+
+    // ── Pomodoro screen buttons ──
+    if (currentScreen == SCREEN_POMODORO) {
+        if (pomoInSettings) {
+            // Settings mode
+            if (buttons[2].pressed) {  // NEXT
+                chimeNext();
+                if (pomoEditing) {
+                    // Increment value
+                    if (pomoField == 0) pomoWorkMin = min(pomoWorkMin + 1, 99);
+                    else                pomoBreakMin = min(pomoBreakMin + 1, 99);
+                } else {
+                    // Toggle to next field
+                    pomoField = (pomoField + 1) % 2;
+                }
+            }
+            if (buttons[0].pressed) {  // BACK
+                chimeBack();
+                if (pomoEditing) {
+                    // Decrement value
+                    if (pomoField == 0) pomoWorkMin = max(pomoWorkMin - 1, 1);
+                    else                pomoBreakMin = max(pomoBreakMin - 1, 1);
+                } else {
+                    // Exit settings
+                    pomoInSettings = false;
+                }
+            }
+            if (buttons[1].pressed) {  // SETTINGS
+                chimeSettings();
+                if (pomoEditing) {
+                    pomoEditing = false; // Confirm edit
+                } else {
+                    pomoEditing = true;  // Enter edit mode
+                }
+            }
+            return;
+        }
+
+        // Normal pomodoro mode
+        if (buttons[2].pressed) {  // NEXT — start/stop
+            chimeNext();
+            if (pomoState == POMO_IDLE) {
+                // Start work session
+                pomoState = POMO_WORK;
+                pomoTimeLeft = (unsigned long)pomoWorkMin * 60000UL;
+                pomoLastTick = millis();
+                pomoRunning = true;
+            } else {
+                // Toggle pause/resume
+                if (pomoRunning) {
+                    pomoRunning = false;
+                } else {
+                    pomoLastTick = millis();
+                    pomoRunning = true;
+                }
+            }
+        }
+        if (buttons[0].pressed) {  // BACK — reset
+            chimeBack();
+            pomoState = POMO_IDLE;
+            pomoRunning = false;
+            pomoTimeLeft = 0;
+        }
+        if (buttons[1].pressed) {  // SETTINGS — enter settings (only when idle)
+            if (pomoState == POMO_IDLE) {
+                chimeSettings();
+                pomoInSettings = true;
+                pomoField = 0;
+                pomoEditing = false;
+            }
+        }
+        // Long-press BACK — exit to watch face
+        if (buttons[0].holding && !buttons[0].holdFired &&
+            (millis() - buttons[0].holdStart > HOLD_MS)) {
+            buttons[0].holdFired = true;
+            pomoState = POMO_IDLE;
+            pomoRunning = false;
+            pomoTimeLeft = 0;
+            currentScreen = SCREEN_CLOCK;
+            chimeBack();
+        }
+        return;
+    }
+
+    // ── Other screens ──
     // NEXT button (GPIO 2) — switch screen or sub-mode
     if (buttons[2].pressed) {
         chimeNext();
@@ -832,7 +1222,18 @@ void handleButtons() {
     // SETTINGS button (GPIO 1)
     if (buttons[1].pressed) {
         chimeSettings();
-        if (currentScreen == SCREEN_TIMER && timerMode == TIMER_ALARM) {
+        if (currentScreen == SCREEN_CLOCK && WiFi.status() != WL_CONNECTED) {
+            // Enter manual time/date setting
+            struct tm t;
+            getLocalTime(&t, 100);
+            clockSetHour  = t.tm_hour;
+            clockSetMin   = t.tm_min;
+            clockSetMonth = t.tm_mon + 1;
+            clockSetDay   = t.tm_mday;
+            clockSetYear  = t.tm_year + 1900;
+            clockField = 0;
+            clockInSettings = true;
+        } else if (currentScreen == SCREEN_TIMER && timerMode == TIMER_ALARM) {
             if (inSettings) {
                 settingsField = (settingsField + 1) % 3;
             } else {
@@ -944,11 +1345,13 @@ void loop() {
     handleButtons();
     checkAlarm();
     updateWeather();
+    updatePomodoro();
 
     switch (currentScreen) {
-        case SCREEN_CLOCK:   drawClockScreen();   break;
-        case SCREEN_WEATHER: drawWeatherScreen();  break;
-        case SCREEN_TIMER:   drawTimerScreen();    break;
+        case SCREEN_CLOCK:    drawClockScreen();    break;
+        case SCREEN_WEATHER:  drawWeatherScreen();  break;
+        case SCREEN_TIMER:    drawTimerScreen();     break;
+        case SCREEN_POMODORO: drawPomodoroScreen();  break;
         default: break;
     }
 
