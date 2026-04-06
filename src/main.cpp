@@ -68,13 +68,17 @@ struct Button {
     bool lastState;
     bool pressed;
     unsigned long lastDebounce;
+    unsigned long holdStart;
+    bool holding;
+    bool holdFired;
 };
 Button buttons[] = {
-    {BTN_BACK, false, false, 0},
-    {BTN_SETTINGS, false, false, 0},
-    {BTN_NEXT, false, false, 0}
+    {BTN_BACK, false, false, 0, 0, false, false},
+    {BTN_SETTINGS, false, false, 0, 0, false, false},
+    {BTN_NEXT, false, false, 0, 0, false, false}
 };
 const unsigned long DEBOUNCE_MS = 200;
+const unsigned long HOLD_MS = 1000; // Long-press threshold
 
 // ── Buzzer Chimes ───────────────────────────────────────────────
 void buzzerTone(uint32_t freq, uint32_t durationMs) {
@@ -217,6 +221,76 @@ uint16_t wmoColor(int code) {
     if (code <= 86) return COL_WHITE;
     if (code >= 95) return COL_MAGENTA;
     return COL_WHITE;
+}
+
+// ── Weather Icons (drawn with primitives) ───────────────────────
+void drawCloud(int cx, int cy, int r) {
+    spr.fillCircle(cx, cy - r/2, r, COL_WHITE);
+    spr.fillCircle(cx - r, cy, r * 3/4, COL_WHITE);
+    spr.fillCircle(cx + r, cy, r * 3/4, COL_WHITE);
+    spr.fillRect(cx - r, cy - r/4, r * 2, r, COL_WHITE);
+}
+
+void drawWeatherIcon(int cx, int cy, int code, int s) {
+    // s = scale: 1 for small (forecast), 2 for larger (current weather)
+    if (code == 0) {
+        // Clear — sun with rays
+        int r = 3 * s;
+        spr.fillCircle(cx, cy, r, COL_YELLOW);
+        for (int i = 0; i < 8; i++) {
+            float a = i * 45.0 * DEG_TO_RAD;
+            int x1 = cx + (int)((r + 2) * cos(a));
+            int y1 = cy + (int)((r + 2) * sin(a));
+            int x2 = cx + (int)((r + 2 + 2 * s) * cos(a));
+            int y2 = cy + (int)((r + 2 + 2 * s) * sin(a));
+            spr.drawLine(x1, y1, x2, y2, COL_YELLOW);
+        }
+    } else if (code <= 2) {
+        // Partly cloudy — sun peeking behind cloud
+        int r = 2 * s;
+        spr.fillCircle(cx + r + s, cy - r, r, COL_YELLOW);
+        for (int i = 0; i < 8; i++) {
+            float a = i * 45.0 * DEG_TO_RAD;
+            int x1 = cx + r + s + (int)((r + 1) * cos(a));
+            int y1 = cy - r + (int)((r + 1) * sin(a));
+            int x2 = cx + r + s + (int)((r + 1 + s) * cos(a));
+            int y2 = cy - r + (int)((r + 1 + s) * sin(a));
+            spr.drawLine(x1, y1, x2, y2, COL_YELLOW);
+        }
+        drawCloud(cx - s, cy, r);
+    } else if (code == 3) {
+        // Overcast — cloud
+        drawCloud(cx, cy, 3 * s);
+    } else if (code == 45 || code == 48) {
+        // Fog — horizontal lines
+        for (int i = 0; i < 3; i++) {
+            int ly = cy - 3 * s + i * 3 * s;
+            spr.drawFastHLine(cx - 5 * s, ly, 10 * s, COL_MID_GRAY);
+        }
+    } else if ((code >= 51 && code <= 57) || (code >= 61 && code <= 67) || (code >= 80 && code <= 82)) {
+        // Rain / drizzle / showers — cloud + rain drops
+        int r = 2 * s;
+        drawCloud(cx, cy - r, r);
+        uint16_t dropCol = COL_BLUE;
+        for (int d = -1; d <= 1; d++) {
+            int dx = cx + d * 3 * s;
+            spr.drawLine(dx, cy + s, dx - s, cy + s + 2 * s, dropCol);
+        }
+    } else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) {
+        // Snow — cloud + snow dots
+        int r = 2 * s;
+        drawCloud(cx, cy - r, r);
+        spr.fillCircle(cx - 2 * s, cy + s + s, s, COL_CYAN);
+        spr.fillCircle(cx, cy + 2 * s + s, s, COL_CYAN);
+        spr.fillCircle(cx + 2 * s, cy + s + s, s, COL_CYAN);
+    } else if (code >= 95) {
+        // Thunderstorm — cloud + lightning bolt
+        int r = 2 * s;
+        drawCloud(cx, cy - r, r);
+        spr.drawLine(cx, cy + s, cx - s, cy + 2 * s, COL_YELLOW);
+        spr.drawLine(cx - s, cy + 2 * s, cx + s / 2, cy + 2 * s, COL_YELLOW);
+        spr.drawLine(cx + s / 2, cy + 2 * s, cx - s / 2, cy + 3 * s, COL_YELLOW);
+    }
 }
 
 // ── WiFi Connection ─────────────────────────────────────────────
@@ -363,7 +437,11 @@ void updateButtons() {
         if (state && !buttons[i].lastState && (now - buttons[i].lastDebounce > DEBOUNCE_MS)) {
             buttons[i].pressed = true;
             buttons[i].lastDebounce = now;
+            buttons[i].holdStart = now;
+            buttons[i].holdFired = false;
         }
+        buttons[i].holding = state;
+        if (!state) buttons[i].holdFired = false;
         buttons[i].lastState = state;
     }
 }
@@ -482,9 +560,12 @@ void drawWeatherScreen() {
     spr.setTextColor(COL_WHITE, COL_BG);
     spr.drawString(tempBuf, 120, 52, 6);
 
-    // Description
+    // Description with icon
+    drawWeatherIcon(60, 82, currentWeather.weatherCode, 2);
+    spr.setTextDatum(ML_DATUM);
     spr.setTextColor(wmoColor(currentWeather.weatherCode), COL_BG);
-    spr.drawString(wmoDescription(currentWeather.weatherCode), 120, 82, 2);
+    spr.drawString(wmoDescription(currentWeather.weatherCode), 85, 82, 2);
+    spr.setTextDatum(MC_DATUM);
 
     // Details row
     char detailBuf[30];
@@ -509,9 +590,8 @@ void drawWeatherScreen() {
         spr.setTextColor(COL_WHITE, COL_BG);
         spr.drawString(forecast[i].dayName, 50, y, 2);
 
-        spr.setTextDatum(MC_DATUM);
-        spr.setTextColor(wmoColor(forecast[i].weatherCode), COL_BG);
-        spr.drawString(wmoDescription(forecast[i].weatherCode), 120, y, 2);
+        // Weather condition icon (replaces text)
+        drawWeatherIcon(120, y, forecast[i].weatherCode, 1);
 
         char fcBuf[15];
         sprintf(fcBuf, "%.0f/%.0f°", forecast[i].tempMax, forecast[i].tempMin);
@@ -633,7 +713,7 @@ void drawTimerScreen() {
 
         spr.setTextColor(COL_MID_GRAY, COL_BG);
         spr.drawString("SETTINGS=Start/Stop", 120, 175, 2);
-        spr.drawString("BACK=Reset", 120, 195, 2);
+        spr.drawString("Hold SETTINGS=Reset", 120, 195, 2);
     }
 
     spr.pushSprite(0, 0);
@@ -680,17 +760,22 @@ void handleButtons() {
         }
     }
 
+    // Long-press SETTINGS in stopwatch when stopped → reset
+    if (buttons[1].holding && !buttons[1].holdFired &&
+        (millis() - buttons[1].holdStart > HOLD_MS) &&
+        currentScreen == SCREEN_TIMER && timerMode == TIMER_STOPWATCH && !stopwatchRunning) {
+        buttons[1].holdFired = true;
+        stopwatchElapsed = 0;
+        chimeBack(); // feedback chime for reset
+    }
+
     // BACK button (GPIO 0)
     if (buttons[0].pressed) {
         chimeBack();
         if (inSettings) {
             inSettings = false;
             alarmTriggered = false;
-        } else if (currentScreen == SCREEN_TIMER && timerMode != TIMER_CLOCK) {
-            if (timerMode == TIMER_STOPWATCH) {
-                stopwatchRunning = false;
-                stopwatchElapsed = 0;
-            }
+        } else if (currentScreen == SCREEN_TIMER && timerMode == TIMER_ALARM) {
             timerMode = TIMER_CLOCK;
         } else {
             currentScreen = (Screen)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
@@ -720,6 +805,8 @@ void checkAlarm() {
 // ── Setup ───────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW); // Silence buzzer immediately on boot
     delay(5000); // Wait for USB CDC host enumeration
     printf("\n\n[Boot] ===== Watch Starting =====\n");
 
@@ -731,6 +818,7 @@ void setup() {
     // LEDC buzzer setup: channel 0, 5kHz base, 8-bit resolution
     ledcSetup(BUZZER_CH, 5000, 8);
     ledcAttachPin(BUZZER_PIN, BUZZER_CH);
+    ledcWriteTone(BUZZER_CH, 0); // Silence immediately — prevent buzz during init
     printf("[Boot] Buzzer ready\n");
 
     printf("[Boot] Initializing display...\n");
@@ -743,12 +831,14 @@ void setup() {
            sprPtr ? "OK" : "FAILED", ESP.getFreeHeap());
     spr.setTextDatum(MC_DATUM);
 
-    // Startup chime
-    buzzerTone(1047, 100);
-    delay(20);
-    buzzerTone(1319, 100);
-    delay(20);
-    buzzerTone(1568, 150);
+    // Startup melody — gentle ascending arpeggio
+    buzzerTone(392, 120);  // G4
+    delay(30);
+    buzzerTone(523, 120);  // C5
+    delay(30);
+    buzzerTone(659, 120);  // E5
+    delay(30);
+    buzzerTone(784, 200);  // G5 — held slightly longer to resolve
 
     connectWiFi();
     syncTime();
