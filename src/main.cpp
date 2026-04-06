@@ -478,14 +478,25 @@ void drawClockScreen() {
     int hour12 = t.tm_hour % 12;
     if (hour12 == 0) hour12 = 12;
     sprintf(timeBuf, "%d:%02d", hour12, t.tm_min);
-    const char* ampm = (t.tm_hour < 12) ? "AM" : "PM";
-
     spr.setTextDatum(MC_DATUM);
     spr.setTextColor(COL_WHITE, COL_BG);
     spr.drawString(timeBuf, 115, 65, 7);
 
-    spr.setTextColor(COL_CYAN, COL_BG);
-    spr.drawString(ampm, 195, 50, 4);
+    // AM/PM indicator — sun or moon icon (left of time)
+    int ix = 42, iy = 65;
+    if (t.tm_hour < 12) {
+        // Sun: filled circle + rays
+        spr.fillCircle(ix, iy, 5, COL_YELLOW);
+        for (int i = 0; i < 8; i++) {
+            float a = i * 45.0 * DEG_TO_RAD;
+            spr.drawLine(ix + (int)(7 * cos(a)), iy + (int)(7 * sin(a)),
+                         ix + (int)(10 * cos(a)), iy + (int)(10 * sin(a)), COL_YELLOW);
+        }
+    } else {
+        // Crescent moon: filled circle with a dark circle overlapping
+        spr.fillCircle(ix, iy, 6, COL_CYAN);
+        spr.fillCircle(ix + 4, iy - 3, 5, COL_BG);
+    }
 
     // Seconds arc
     for (int s = 0; s <= t.tm_sec; s++) {
@@ -554,17 +565,30 @@ void drawWeatherScreen() {
     spr.setTextColor(COL_CYAN, COL_BG);
     spr.drawString("Lynnwood, WA", 120, 20, 2);
 
-    // Current temp — big
-    char tempBuf[10];
-    sprintf(tempBuf, "%.0f°F", currentWeather.temp);
+    // Current temp — big, with unit in smaller font
+    char tempNum[8];
+    sprintf(tempNum, "%.0f", currentWeather.temp);
+    int numW = spr.textWidth(tempNum, 6);
+    int unitW = spr.textWidth("F", 4);
+    int tempTotalW = numW + 2 + unitW;
+    int tempStartX = 120 - tempTotalW / 2;
+    spr.setTextDatum(ML_DATUM);
     spr.setTextColor(COL_WHITE, COL_BG);
-    spr.drawString(tempBuf, 120, 52, 6);
+    spr.drawString(tempNum, tempStartX, 52, 6);
+    spr.setTextColor(COL_MID_GRAY, COL_BG);
+    spr.drawString("F", tempStartX + numW + 2, 52, 4);
+    spr.setTextDatum(MC_DATUM);
 
-    // Description with icon
-    drawWeatherIcon(60, 82, currentWeather.weatherCode, 2);
+    // Description with icon — centered as a pair
+    const char* condText = wmoDescription(currentWeather.weatherCode);
+    int textW = spr.textWidth(condText, 2);
+    int iconW = 20; // approx icon width at scale 2
+    int totalW = iconW + 4 + textW; // icon + gap + text
+    int startX = 120 - totalW / 2;
+    drawWeatherIcon(startX + iconW / 2, 82, currentWeather.weatherCode, 2);
     spr.setTextDatum(ML_DATUM);
     spr.setTextColor(wmoColor(currentWeather.weatherCode), COL_BG);
-    spr.drawString(wmoDescription(currentWeather.weatherCode), 85, 82, 2);
+    spr.drawString(condText, startX + iconW + 4, 82, 2);
     spr.setTextDatum(MC_DATUM);
 
     // Details row
@@ -686,6 +710,20 @@ void drawTimerScreen() {
 
         // Center dot
         spr.fillCircle(cx, cy, 3, COL_WHITE);
+
+        // AM/PM sun or moon icon — upper half center
+        int ix = cx, iy = cy - 45;
+        if (t.tm_hour < 12) {
+            spr.fillCircle(ix, iy, 5, COL_YELLOW);
+            for (int r = 0; r < 8; r++) {
+                float a = r * 45.0 * DEG_TO_RAD;
+                spr.drawLine(ix + (int)(7 * cos(a)), iy + (int)(7 * sin(a)),
+                             ix + (int)(10 * cos(a)), iy + (int)(10 * sin(a)), COL_YELLOW);
+            }
+        } else {
+            spr.fillCircle(ix, iy, 6, COL_CYAN);
+            spr.fillCircle(ix + 4, iy - 3, 5, COL_BG);
+        }
 
         // Compact date display below center
         const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
