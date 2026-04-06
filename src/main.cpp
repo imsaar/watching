@@ -5,7 +5,7 @@
  * Wiring:
  *   GC9A01: SCK=GPIO5, MOSI=GPIO6, DC=GPIO7, CS=GPIO8, RST=GPIO9
  *   Buttons: BACK=GPIO0, SETTINGS=GPIO1, NEXT=GPIO2 (INPUT_PULLDOWN, active HIGH)
- *   Buzzer: GPIO21 (passive piezo, PWM)
+ *   Buzzer: GPIO3 (passive piezo, PWM) — RTC GPIO, stays LOW during boot
  *
  * Screens:
  *   1) Watch face — time, Gregorian date, Islamic (Hijri) date
@@ -26,7 +26,7 @@
 #define BTN_BACK     0
 #define BTN_SETTINGS 1
 #define BTN_NEXT     2
-#define BUZZER_PIN   21
+#define BUZZER_PIN   3
 #define BUZZER_CH    0  // LEDC channel for buzzer
 
 // ── Lynnwood, WA coordinates for Open-Meteo ────────────────────
@@ -629,31 +629,78 @@ void drawTimerScreen() {
     }
 
     if (timerMode == TIMER_CLOCK) {
-        char timeBuf[9];
-        sprintf(timeBuf, "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
-        spr.setTextColor(COL_WHITE, COL_BG);
-        spr.drawString(timeBuf, 120, 80, 6);
+        const int cx = 120, cy = 120;
 
-        // Tick marks
+        // Tick marks and hour numbers
         for (int i = 0; i < 60; i++) {
             float a = i * 6.0 - 90.0;
             float rad = a * DEG_TO_RAD;
-            int r1 = (i % 5 == 0) ? 95 : 100;
-            int r2 = 105;
+            int r1 = (i % 5 == 0) ? 88 : 95;
+            int r2 = 100;
             uint16_t col = (i % 5 == 0) ? COL_CYAN : COL_DARK_GRAY;
-            int x1 = 120 + (int)(r1 * cos(rad));
-            int y1 = 120 + (int)(r1 * sin(rad));
-            int x2 = 120 + (int)(r2 * cos(rad));
-            int y2 = 120 + (int)(r2 * sin(rad));
+            int x1 = cx + (int)(r1 * cos(rad));
+            int y1 = cy + (int)(r1 * sin(rad));
+            int x2 = cx + (int)(r2 * cos(rad));
+            int y2 = cy + (int)(r2 * sin(rad));
             spr.drawLine(x1, y1, x2, y2, col);
+
+            // Hour numbers at 5-minute marks
+            if (i % 5 == 0) {
+                int hr = i / 5;
+                if (hr == 0) hr = 12;
+                char hBuf[3];
+                sprintf(hBuf, "%d", hr);
+                int tx = cx + (int)(78 * cos(rad));
+                int ty = cy + (int)(78 * sin(rad));
+                spr.setTextColor(COL_WHITE, COL_BG);
+                spr.drawString(hBuf, tx, ty, 2);
+            }
         }
 
+        // Hour hand
+        float hAngle = ((t.tm_hour % 12) + t.tm_min / 60.0) * 30.0 - 90.0;
+        float hRad = hAngle * DEG_TO_RAD;
+        int hLen = 45;
+        int hx = cx + (int)(hLen * cos(hRad));
+        int hy = cy + (int)(hLen * sin(hRad));
+        spr.drawLine(cx, cy, hx, hy, COL_WHITE);
+        spr.drawLine(cx + 1, cy, hx + 1, hy, COL_WHITE);
+        spr.drawLine(cx, cy + 1, hx, hy + 1, COL_WHITE);
+
+        // Minute hand
+        float mAngle = t.tm_min * 6.0 - 90.0;
+        float mRad = mAngle * DEG_TO_RAD;
+        int mLen = 62;
+        int mx = cx + (int)(mLen * cos(mRad));
+        int my = cy + (int)(mLen * sin(mRad));
+        spr.drawLine(cx, cy, mx, my, COL_CYAN);
+        spr.drawLine(cx + 1, cy, mx + 1, my, COL_CYAN);
+
+        // Second hand
+        float sAngle = t.tm_sec * 6.0 - 90.0;
+        float sRad = sAngle * DEG_TO_RAD;
+        int sLen = 68;
+        int sx = cx + (int)(sLen * cos(sRad));
+        int sy = cy + (int)(sLen * sin(sRad));
+        spr.drawLine(cx, cy, sx, sy, COL_RED);
+
+        // Center dot
+        spr.fillCircle(cx, cy, 3, COL_WHITE);
+
+        // Compact date display below center
         const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun",
                                 "Jul","Aug","Sep","Oct","Nov","Dec"};
+        const char* dayAbbr[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
         char dateBuf[20];
-        sprintf(dateBuf, "%s %d, %d", months[t.tm_mon], t.tm_mday, t.tm_year + 1900);
+        sprintf(dateBuf, "%s %s %d", dayAbbr[t.tm_wday], months[t.tm_mon], t.tm_mday);
         spr.setTextColor(COL_GREEN, COL_BG);
-        spr.drawString(dateBuf, 120, 200, 2);
+        spr.drawString(dateBuf, cx, cy + 30, 1);
+
+        HijriDate h = gregorianToHijri(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+        char hijriBuf[30];
+        sprintf(hijriBuf, "%d %s %d", h.day, hijriMonths[h.month - 1], h.year);
+        spr.setTextColor(COL_GOLD, COL_BG);
+        spr.drawString(hijriBuf, cx, cy + 42, 1);
 
     } else if (timerMode == TIMER_ALARM) {
         spr.setTextColor(COL_WHITE, COL_BG);
@@ -733,7 +780,12 @@ void handleButtons() {
                 alarmEnabled = !alarmEnabled;
             }
         } else if (currentScreen == SCREEN_TIMER) {
-            timerMode = (TimerMode)((timerMode + 1) % TIMER_MODE_COUNT);
+            if (timerMode == TIMER_STOPWATCH) {
+                timerMode = TIMER_CLOCK;
+                currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
+            } else {
+                timerMode = (TimerMode)((timerMode + 1) % TIMER_MODE_COUNT);
+            }
         } else {
             currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
         }
@@ -804,9 +856,16 @@ void checkAlarm() {
 
 // ── Setup ───────────────────────────────────────────────────────
 void setup() {
-    Serial.begin(115200);
+    // Silence buzzer as early as possible
     pinMode(BUZZER_PIN, OUTPUT);
-    digitalWrite(BUZZER_PIN, LOW); // Silence buzzer immediately on boot
+    digitalWrite(BUZZER_PIN, LOW);
+
+    // LEDC buzzer setup
+    ledcSetup(BUZZER_CH, 5000, 8);
+    ledcAttachPin(BUZZER_PIN, BUZZER_CH);
+    ledcWriteTone(BUZZER_CH, 0);
+
+    Serial.begin(115200);
     delay(5000); // Wait for USB CDC host enumeration
     printf("\n\n[Boot] ===== Watch Starting =====\n");
 
@@ -814,11 +873,6 @@ void setup() {
     pinMode(BTN_SETTINGS, INPUT_PULLUP);
     pinMode(BTN_NEXT, INPUT_PULLUP);
     printf("[Boot] Pins configured\n");
-
-    // LEDC buzzer setup: channel 0, 5kHz base, 8-bit resolution
-    ledcSetup(BUZZER_CH, 5000, 8);
-    ledcAttachPin(BUZZER_PIN, BUZZER_CH);
-    ledcWriteTone(BUZZER_CH, 0); // Silence immediately — prevent buzz during init
     printf("[Boot] Buzzer ready\n");
 
     printf("[Boot] Initializing display...\n");

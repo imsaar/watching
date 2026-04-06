@@ -5,18 +5,19 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
 ## 🚀 Features
 
 -   **Watch Face**:
-    -   12-hour/24-hour time with a smooth seconds arc.
+    -   12-hour time with a smooth seconds arc.
     -   Gregorian and Islamic (Hijri) date display.
     -   WiFi connectivity and current weather summary.
 -   **Weather Dashboard**:
-    -   Current temperature, "feels like", humidity, and wind speed.
-    -   3-day forecast with daily highs/lows and conditions.
+    -   Current temperature, "feels like", humidity, and wind speed with weather condition icon.
+    -   3-day forecast with weather icons and daily highs/lows.
     -   Powered by the Open-Meteo API (no API key required).
 -   **Timer & Utilities**:
-    -   **Clock**: Precise NTP-synced digital clock with a visual tick-mark bezel.
+    -   **Analog Clock**: NTP-synced analog clock face with hour/minute/second hands, hour numbers, and compact Gregorian and Hijri date display.
     -   **Alarm**: Configurable alarm with an interactive settings menu and buzzer chime.
-    -   **Stopwatch**: High-precision stopwatch with millisecond display and start/stop/reset controls.
+    -   **Stopwatch**: High-precision stopwatch with millisecond display. Start/stop with SETTINGS button, long-press SETTINGS to reset when stopped.
 -   **Audio Feedback**:
+    -   Gentle startup melody (ascending G major arpeggio).
     -   Unique chimes for each button action.
     -   Alert melody for the alarm.
 -   **Connectivity**:
@@ -43,7 +44,7 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
 | **Button BACK** | GPIO 0 | Pull-up, active LOW |
 | **Button SETTINGS** | GPIO 1 | Pull-up, active LOW |
 | **Button NEXT** | GPIO 2 | Pull-up, active LOW |
-| **Buzzer** | GPIO 21 | PWM Audio |
+| **Buzzer** | GPIO 3 | PWM Audio (RTC GPIO — stays silent during boot/flash) |
 
 ## 💻 Software & Libraries
 
@@ -72,9 +73,9 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
 
 ## 🎮 Controls
 
--   **NEXT**: Switch between main screens (Watch → Weather → Timer) or cycle through sub-modes/settings.
--   **SETTINGS**: Enter/exit settings for the Alarm or Start/Stop the Stopwatch.
--   **BACK**: Go back to the main clock or reset the stopwatch.
+-   **NEXT**: Cycle through all screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Watch. In alarm settings, adjusts values.
+-   **SETTINGS**: Enter/edit alarm settings, or start/stop the stopwatch. Long-press (1s) to reset the stopwatch when stopped.
+-   **BACK**: Navigate to the previous screen. In alarm settings, exits the settings menu.
 
 ## 📜 License
 
