@@ -79,12 +79,15 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
 ## ⚙️ Setup
 
 1.  **Clone the repository**.
-2.  **Configure WiFi**: Create a `src/secrets.h` file with your credentials:
+2.  **Configure WiFi**: Create an `include/secrets.h` file with your credentials:
     ```cpp
-    #define WIFI_SSID "Your_SSID"
-    #define WIFI_PASSWORD "Your_Password"
+    #ifndef SECRETS_H
+    #define SECRETS_H
+    const char* const WIFI_SSID     = "Your_SSID";
+    const char* const WIFI_PASSWORD = "Your_Password";
+    #endif
     ```
-3.  **Location**: Update the `LATITUDE` and `LONGITUDE` constants in `src/main.cpp` for your local weather.
+3.  **Location**: Update the `LATITUDE` and `LONGITUDE` constants in `include/config.h` for your local weather.
 4.  **Flash**: Connect your ESP32-C3 and run:
     ```bash
     pio run --target upload
@@ -96,6 +99,29 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
 -   **SETTINGS**: Enter/edit alarm settings (hour, minute, on/off, snooze duration), start/stop the stopwatch (long-press to reset), configure Pomodoro, start/retry Geometry Dash, or set time/date manually on the watch face (when WiFi is disconnected).
 -   **BACK**: Navigate to the previous screen, reset Pomodoro, pause/quit the game, stop the alarm, or exit settings. Long-press (1s) to exit Pomodoro to the watch face.
 -   **Long-press NEXT** (Pomodoro): Navigate to next screen without starting the timer.
+
+## 📁 Project Structure
+
+```
+include/
+  config.h           — Pin definitions, colors, timing constants, location
+  globals.h          — Screen enum, shared display object externs
+  secrets.h          — WiFi credentials (not in repo)
+src/
+  main.cpp           — setup() and loop() entry points
+  globals.cpp        — Display objects, drawing helpers
+  buttons.h/.cpp     — Button struct, debounce logic
+  buzzer.h/.cpp      — Buzzer tones and chime functions
+  hijri.h/.cpp       — Gregorian to Hijri calendar conversion
+  weather.h/.cpp     — Weather data, Open-Meteo API fetch, weather icons
+  wifi_ntp.h/.cpp    — WiFi connection and NTP time sync
+  screen_clock.h/.cpp    — Watch face screen
+  screen_weather.h/.cpp  — Weather dashboard screen
+  screen_timer.h/.cpp    — Analog clock, alarm, and stopwatch screen
+  screen_game.h/.cpp     — Geometry Dash mini-game
+  screen_pomodoro.h/.cpp — Pomodoro timer screen
+  input_handler.h/.cpp   — Button action routing for all screens
+```
 
 ## 📜 License
 
