@@ -1,6 +1,6 @@
 # ESP32-C3 SuperMini Smart Watch
 
-A functional and stylish smart watch built with an ESP32-C3 SuperMini and a round GC9A01 display. This project features a multi-screen interface, real-time weather updates, Hijri calendar support, and a complete timer/alarm system.
+A functional and stylish smart watch built with an ESP32-C3 SuperMini and a round GC9A01 display. This project features a multi-screen interface, real-time weather updates, Hijri calendar support, a complete timer/alarm system, a Pomodoro timer, and a Geometry Dash mini-game.
 
 ## 🚀 Features
 
@@ -15,18 +15,30 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
     -   Powered by the Open-Meteo API (no API key required).
 -   **Timer & Utilities**:
     -   **Analog Clock**: NTP-synced analog clock face with hour/minute/second hands, hour numbers, sun/moon icon, and compact Gregorian and Hijri date display.
-    -   **Alarm**: Configurable alarm with an interactive settings menu and buzzer chime.
+    -   **Alarm**: Configurable alarm with continuous Space Invaders-style melody. Configurable snooze duration (0-15 minutes, 0 disables snooze). Alarm auto-switches to the alarm screen when triggered, with Snooze (NEXT) and Stop (BACK) options. Snooze countdown re-triggers the alarm when it expires.
     -   **Stopwatch**: High-precision stopwatch with millisecond display. Start/stop with SETTINGS button, long-press SETTINGS to reset when stopped.
+-   **Geometry Dash Game**:
+    -   Endless runner with a jumping square dodging pointy triangle obstacles.
+    -   Three obstacle types: single spikes, double spikes, and tall spikes.
+    -   Double-jump ability with visual ring indicator.
+    -   Multi-layer parallax background: scrolling city silhouettes, star streaks at high speed, and perspective ground lines.
+    -   Particle effects: jump dust, airborne trail, score sparkle, and death explosion.
+    -   Player rotation while airborne with squash/stretch on landing.
+    -   Color theme progression every 10 points through 6 palettes.
+    -   Speed ramps with milestone flash effects; speed capped for fairness.
+    -   High score tracking. SETTINGS to start/retry, NEXT to jump, BACK to pause/quit.
 -   **Pomodoro Timer**:
     -   Configurable work/break intervals (default 25m/5m).
     -   Visual progress arc (red for work, green for break).
     -   Auto-transitions between work and break with distinct melodies.
-    -   NEXT to start/stop, BACK to reset, SETTINGS to configure, hold BACK to exit.
+    -   NEXT to start/stop, BACK to reset, SETTINGS to configure.
+    -   Long-press NEXT to navigate to next screen, long-press BACK to exit to watch face.
 -   **Audio Feedback**:
     -   Gentle startup melody (ascending G major arpeggio).
     -   Unique chimes for each button action.
-    -   Alert melody for the alarm.
+    -   Continuous Space Invaders-style alarm melody (looping march + urgency phrases).
     -   Pomodoro break start (descending) and break end (ascending) melodies.
+    -   Game: jump blip, death crash sound, score chime.
 -   **Connectivity**:
     -   Automatic WiFi connection for NTP time synchronization and weather fetching.
     -   Dynamic updates for weather data every 10 minutes.
@@ -80,9 +92,10 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
 
 ## 🎮 Controls
 
--   **NEXT**: Cycle through all screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Pomodoro → Watch. Adjusts values in settings.
--   **SETTINGS**: Enter/edit alarm settings, start/stop the stopwatch (long-press to reset), configure Pomodoro, or set time/date manually on the watch face (when WiFi is disconnected).
--   **BACK**: Navigate to the previous screen, reset Pomodoro, or exit settings. Long-press (1s) to exit Pomodoro to the watch face.
+-   **NEXT**: Cycle forward through screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Game → Pomodoro → Watch. Adjusts values in settings. Jumps in Geometry Dash. Snoozes alarm when ringing.
+-   **SETTINGS**: Enter/edit alarm settings (hour, minute, on/off, snooze duration), start/stop the stopwatch (long-press to reset), configure Pomodoro, start/retry Geometry Dash, or set time/date manually on the watch face (when WiFi is disconnected).
+-   **BACK**: Navigate to the previous screen, reset Pomodoro, pause/quit the game, stop the alarm, or exit settings. Long-press (1s) to exit Pomodoro to the watch face.
+-   **Long-press NEXT** (Pomodoro): Navigate to next screen without starting the timer.
 
 ## 📜 License
 
