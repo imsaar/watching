@@ -59,7 +59,7 @@ TFT_eSprite spr = TFT_eSprite(&tft);
 #define COL_TEAL       0x0410
 
 // ── Screen State ────────────────────────────────────────────────
-enum Screen { SCREEN_CLOCK = 0, SCREEN_WEATHER, SCREEN_TIMER, SCREEN_POMODORO, SCREEN_COUNT };
+enum Screen { SCREEN_CLOCK = 0, SCREEN_WEATHER, SCREEN_TIMER, SCREEN_GAME, SCREEN_POMODORO, SCREEN_COUNT };
 Screen currentScreen = SCREEN_CLOCK;
 
 // ── Button Debounce ─────────────────────────────────────────────
@@ -106,12 +106,7 @@ void chimeNext() {
 }
 
 void chimeAlarm() {
-    for (int i = 0; i < 5; i++) {
-        buzzerTone(2000, 150);
-        delay(50);
-        buzzerTone(1500, 150);
-        delay(50);
-    }
+    // Legacy — not used for continuous alarm anymore
 }
 
 // Pomodoro: time for a break — pleasant descending melody
@@ -140,6 +135,22 @@ void chimeBreakEnd() {
     buzzerTone(1319, 150); // E6
     delay(40);
     buzzerTone(1568, 250); // G6 — bright finish
+}
+
+// Game: death crash
+void chimeDeath() {
+    buzzerTone(400, 80);
+    delay(30);
+    buzzerTone(250, 80);
+    delay(30);
+    buzzerTone(150, 150);
+}
+
+// Game: jump blip
+void chimeJump() {
+    ledcWriteTone(BUZZER_CH, 900);
+    delay(30);
+    ledcWriteTone(BUZZER_CH, 0);
 }
 
 // ── Weather Data ────────────────────────────────────────────────
@@ -173,7 +184,17 @@ unsigned long stopwatchElapsed = 0;
 bool alarmEnabled = false;
 int alarmHour = 7;
 int alarmMinute = 0;
-bool alarmTriggered = false;
+bool alarmTriggered = false;       // prevents re-trigger within same minute
+bool alarmRinging = false;         // alarm is actively sounding
+unsigned long alarmLastChime = 0;  // for repeating chime (non-blocking)
+int alarmNoteIdx = 0;              // current note in alarm melody
+int alarmSnoozeMin = 5;            // snooze duration in minutes (0 = disabled)
+bool alarmSnoozing = false;        // snooze countdown active
+unsigned long alarmSnoozeEnd = 0;  // millis() when snooze expires
+Screen alarmPrevScreen = SCREEN_CLOCK; // screen to restore after alarm dismiss
+// Forward declarations for alarm actions (defined near checkAlarm)
+void alarmStop();
+void alarmSnooze();
 
 // ── Timer Screen Sub-modes ──────────────────────────────────────
 enum TimerMode { TIMER_CLOCK = 0, TIMER_ALARM, TIMER_STOPWATCH, TIMER_MODE_COUNT };
@@ -199,6 +220,81 @@ int clockSetHour, clockSetMin, clockSetMonth, clockSetDay, clockSetYear;
 // ── Settings State ──────────────────────────────────────────────
 bool inSettings = false;
 int settingsField = 0; // 0=hour, 1=minute, 2=enable/disable
+
+// ── Geometry Dash Game State ────────────────────────────────────
+enum GameState { GAME_READY, GAME_PLAYING, GAME_OVER, GAME_CONFIRM_EXIT };
+GameState gameState = GAME_READY;
+
+// Ground & play area (circular display — usable band roughly y=40..200)
+#define GAME_GROUND_Y   178          // ground line y
+#define GAME_PLAYER_X    55          // player square center-x
+#define GAME_PLAYER_SZ   14          // half-size of player square
+#define GAME_GRAVITY    1.0f         // pixels/frame² downward
+#define GAME_JUMP_VEL  -8.8f         // initial upward velocity
+#define GAME_MAX_OBS     6           // max simultaneous obstacles
+#define GAME_MAX_PARTS  20           // particle pool
+#define GAME_MAX_STARS  18           // background stars
+
+float  gamePlayerY  = GAME_GROUND_Y - GAME_PLAYER_SZ * 2;
+float  gameVelY     = 0;
+bool   gameOnGround = true;
+bool   gameCanDouble = false;        // double-jump available
+float  gamePlayerRot = 0;            // rotation angle (radians)
+float  gameSquash    = 1.0f;         // squash/stretch factor (1=normal)
+unsigned long gameLandMs = 0;        // landing timestamp for squash anim
+
+// Obstacle types: 0=single spike, 1=double spike, 2=tall spike
+struct Obstacle {
+    float x;
+    int   halfW;
+    int   h;
+    int   type;       // 0=single, 1=double, 2=tall
+    bool  active;
+    bool  scored;
+};
+Obstacle gameObs[GAME_MAX_OBS];
+
+// Particle system (trail + death explosion)
+struct Particle {
+    float x, y, vx, vy;
+    uint16_t col;
+    int life;         // frames remaining
+    bool active;
+};
+Particle gameParts[GAME_MAX_PARTS];
+
+// Background stars
+struct Star {
+    float x, y;
+    uint16_t col;
+    float speed;      // relative to gameSpeed
+};
+Star gameStars[GAME_MAX_STARS];
+
+float  gameSpeed     = 2.8f;        // obstacle scroll speed (px/frame)
+int    gameScore     = 0;
+int    gameHiScore   = 0;
+unsigned long gameFrameMs = 0;
+float  gameSpawnDist = 0;
+int    gameFlashTimer = 0;           // milestone flash countdown
+uint16_t gameFlashCol = COL_WHITE;   // milestone flash color
+
+// Color theme progression based on score
+uint16_t gameGroundCol  = COL_DARK_GRAY;
+uint16_t gamePlayerCol  = COL_GREEN;
+uint16_t gameAccentCol  = COL_CYAN;
+uint16_t gameBgCol      = 0x0000;      // tinted background color
+
+// Background scrolling columns (far layer)
+#define GAME_MAX_COLS    6
+struct BgColumn {
+    float x;
+    int   w, h;       // width and height from ground up
+    uint16_t col;
+    float speed;       // parallax factor (0..1, lower=farther)
+};
+BgColumn gameBgCols[GAME_MAX_COLS];
+float gameBgScroll = 0; // accumulated scroll for ground perspective
 
 // ── Hijri Calendar Conversion ───────────────────────────────────
 struct HijriDate {
@@ -882,31 +978,106 @@ void drawTimerScreen() {
         spr.drawString(hijriBuf, cx, cy + 42, 1);
 
     } else if (timerMode == TIMER_ALARM) {
-        spr.setTextColor(COL_WHITE, COL_BG);
-        spr.drawString("Alarm", 120, 55, 4);
+        // ── Alarm ringing screen ──
+        if (alarmRinging) {
+            // Flashing title
+            bool flash = (millis() / 400) % 2;
+            spr.setTextColor(flash ? COL_RED : COL_YELLOW, COL_BG);
+            spr.drawString("ALARM!", 120, 50, 4);
 
-        char alarmBuf[6];
-        int aH = alarmHour % 12;
-        if (aH == 0) aH = 12;
-        sprintf(alarmBuf, "%d:%02d", aH, alarmMinute);
-        spr.setTextColor(alarmEnabled ? COL_GREEN : COL_MID_GRAY, COL_BG);
-        spr.drawString(alarmBuf, 110, 100, 7);
+            // Show alarm time
+            char alarmBuf[6];
+            int aH = alarmHour % 12;
+            if (aH == 0) aH = 12;
+            sprintf(alarmBuf, "%d:%02d", aH, alarmMinute);
+            spr.setTextColor(COL_WHITE, COL_BG);
+            spr.drawString(alarmBuf, 110, 95, 7);
+            const char* aAmPm = (alarmHour < 12) ? "AM" : "PM";
+            spr.drawString(aAmPm, 190, 80, 4);
 
-        const char* aAmPm = (alarmHour < 12) ? "AM" : "PM";
-        spr.drawString(aAmPm, 190, 85, 4);
+            // Animated bell icon (simple oscillating lines)
+            int bellX = 120, bellY = 140;
+            int swing = ((millis() / 200) % 3) - 1; // -1, 0, 1
+            spr.fillCircle(bellX + swing, bellY - 8, 3, COL_YELLOW);
+            spr.fillTriangle(bellX - 10 + swing, bellY, bellX + 10 + swing, bellY,
+                             bellX + swing, bellY - 14, COL_YELLOW);
+            spr.drawFastHLine(bellX - 12 + swing, bellY + 1, 24, COL_YELLOW);
+            spr.fillCircle(bellX + swing, bellY + 4, 2, COL_YELLOW);
 
-        spr.setTextColor(alarmEnabled ? COL_GREEN : COL_RED, COL_BG);
-        spr.drawString(alarmEnabled ? "ON" : "OFF", 120, 145, 4);
+            // Snooze / Stop buttons
+            if (alarmSnoozeMin > 0) {
+                spr.setTextColor(COL_GREEN, COL_BG);
+                char snoozeBuf[24];
+                sprintf(snoozeBuf, "NEXT = Snooze %dm", alarmSnoozeMin);
+                spr.drawString(snoozeBuf, 120, 170, 2);
+            }
+            spr.setTextColor(COL_RED, COL_BG);
+            spr.drawString("BACK = Stop", 120, 190, 2);
 
-        if (inSettings) {
-            spr.setTextColor(COL_YELLOW, COL_BG);
-            const char* fields[] = {"< > Hour", "< > Minute", "< > On/Off"};
-            spr.drawString(fields[settingsField], 120, 175, 2);
+        // ── Snooze countdown screen ──
+        } else if (alarmSnoozing) {
+            spr.setTextColor(COL_CYAN, COL_BG);
+            spr.drawString("Snoozing", 120, 50, 4);
+
+            // Show remaining snooze time
+            unsigned long remaining = 0;
+            if (millis() < alarmSnoozeEnd)
+                remaining = alarmSnoozeEnd - millis();
+            int sMin = remaining / 60000;
+            int sSec = (remaining % 60000) / 1000;
+            char snoozeBuf[10];
+            sprintf(snoozeBuf, "%d:%02d", sMin, sSec);
+            spr.setTextColor(COL_WHITE, COL_BG);
+            spr.drawString(snoozeBuf, 120, 100, 7);
+
             spr.setTextColor(COL_MID_GRAY, COL_BG);
-            spr.drawString("NEXT=Adjust BACK=Done", 120, 195, 1);
+            spr.drawString("Alarm will ring again", 120, 150, 2);
+
+            // Show alarm time below
+            char alarmBuf[12];
+            int aH = alarmHour % 12;
+            if (aH == 0) aH = 12;
+            sprintf(alarmBuf, "%d:%02d %s", aH, alarmMinute, (alarmHour < 12) ? "AM" : "PM");
+            spr.setTextColor(COL_GOLD, COL_BG);
+            spr.drawString(alarmBuf, 120, 175, 2);
+
+        // ── Normal alarm display ──
         } else {
+            spr.setTextColor(COL_WHITE, COL_BG);
+            spr.drawString("Alarm", 120, 55, 4);
+
+            char alarmBuf[6];
+            int aH = alarmHour % 12;
+            if (aH == 0) aH = 12;
+            sprintf(alarmBuf, "%d:%02d", aH, alarmMinute);
+            spr.setTextColor(alarmEnabled ? COL_GREEN : COL_MID_GRAY, COL_BG);
+            spr.drawString(alarmBuf, 110, 100, 7);
+
+            const char* aAmPm = (alarmHour < 12) ? "AM" : "PM";
+            spr.drawString(aAmPm, 190, 85, 4);
+
+            spr.setTextColor(alarmEnabled ? COL_GREEN : COL_RED, COL_BG);
+            spr.drawString(alarmEnabled ? "ON" : "OFF", 120, 140, 4);
+
+            // Show snooze setting
+            char snoozeBuf[16];
+            if (alarmSnoozeMin > 0)
+                sprintf(snoozeBuf, "Snooze: %dm", alarmSnoozeMin);
+            else
+                sprintf(snoozeBuf, "Snooze: Off");
             spr.setTextColor(COL_MID_GRAY, COL_BG);
-            spr.drawString("SETTINGS to edit", 120, 180, 2);
+            spr.drawString(snoozeBuf, 120, 162, 2);
+
+            if (inSettings) {
+                spr.setTextColor(COL_YELLOW, COL_BG);
+                const char* fields[] = {"< > Hour", "< > Minute", "< > On/Off", "< > Snooze"};
+                spr.drawString(fields[settingsField], 120, 182, 2);
+                spr.setTextColor(COL_MID_GRAY, COL_BG);
+                spr.drawString("NEXT=Adjust BACK=Done", 120, 200, 1);
+            } else {
+                spr.setTextColor(COL_MID_GRAY, COL_BG);
+                spr.drawString("SETTINGS to edit", 120, 185, 2);
+            }
         }
 
     } else if (timerMode == TIMER_STOPWATCH) {
@@ -1084,8 +1255,670 @@ void updatePomodoro() {
     }
 }
 
+// ── Geometry Dash: Helpers ──────────────────────────────────────
+void gameUpdateTheme() {
+    // Color theme shifts every 10 points — player, accent, ground, background
+    int tier = gameScore / 10;
+    switch (tier % 6) {
+        case 0: gamePlayerCol = COL_GREEN;   gameAccentCol = COL_CYAN;       gameGroundCol = COL_DARK_GRAY; gameBgCol = 0x0000; break;
+        case 1: gamePlayerCol = COL_CYAN;    gameAccentCol = COL_MAGENTA;    gameGroundCol = 0x2104; gameBgCol = 0x0821; break; // dark blue tint
+        case 2: gamePlayerCol = COL_YELLOW;  gameAccentCol = COL_ORANGE;     gameGroundCol = 0x1082; gameBgCol = 0x1000; break; // dark red tint
+        case 3: gamePlayerCol = COL_MAGENTA; gameAccentCol = COL_LIGHT_BLUE; gameGroundCol = 0x0811; gameBgCol = 0x0811; break; // dark teal tint
+        case 4: gamePlayerCol = COL_ORANGE;  gameAccentCol = COL_GREEN;      gameGroundCol = 0x2945; gameBgCol = 0x0841; break; // dark purple tint
+        case 5: gamePlayerCol = COL_GOLD;    gameAccentCol = COL_RED;        gameGroundCol = 0x18C3; gameBgCol = 0x1020; break; // dark green tint
+    }
+}
+
+void gameSpawnParticle(float x, float y, float vx, float vy, uint16_t col, int life) {
+    for (int i = 0; i < GAME_MAX_PARTS; i++) {
+        if (!gameParts[i].active) {
+            gameParts[i] = {x, y, vx, vy, col, life, true};
+            return;
+        }
+    }
+}
+
+void gameInitStars() {
+    for (int i = 0; i < GAME_MAX_STARS; i++) {
+        gameStars[i].x = random(240);
+        gameStars[i].y = 20 + random(GAME_GROUND_Y - 40);
+        uint8_t b = 4 + random(12);
+        gameStars[i].col = (b << 11) | (b << 6) | b; // dim white-ish
+        gameStars[i].speed = 0.15f + (random(100) / 200.0f);
+    }
+}
+
+void gameInitBgCols() {
+    // Dark silhouette columns at varying depths
+    for (int i = 0; i < GAME_MAX_COLS; i++) {
+        gameBgCols[i].x = random(280);
+        gameBgCols[i].w = 12 + random(20);
+        gameBgCols[i].h = 25 + random(50);
+        gameBgCols[i].speed = 0.12f + (random(100) / 400.0f); // 0.12 - 0.37
+        // Darker columns = farther, brighter = closer
+        uint8_t v = 1 + (int)(gameBgCols[i].speed * 8);
+        gameBgCols[i].col = (v << 11) | (v << 6) | v;
+    }
+}
+
+// ── Geometry Dash: Game Logic ───────────────────────────────────
+void gameReset() {
+    gamePlayerY = GAME_GROUND_Y - GAME_PLAYER_SZ * 2;
+    gameVelY = 0;
+    gameOnGround = true;
+    gameCanDouble = false;
+    gamePlayerRot = 0;
+    gameSquash = 1.0f;
+    gameScore = 0;
+    gameSpeed = 2.8f;
+    gameSpawnDist = 140;
+    gameFlashTimer = 0;
+    for (int i = 0; i < GAME_MAX_OBS; i++) gameObs[i].active = false;
+    for (int i = 0; i < GAME_MAX_PARTS; i++) gameParts[i].active = false;
+    gameInitStars();
+    gameInitBgCols();
+    gameBgScroll = 0;
+    gameUpdateTheme();
+    gameFrameMs = millis();
+}
+
+void gameSpawnObstacle() {
+    for (int i = 0; i < GAME_MAX_OBS; i++) {
+        if (!gameObs[i].active) {
+            gameObs[i].x = 245;
+            // Type probabilities shift with score
+            int r = random(100);
+            if (gameScore < 5) {
+                gameObs[i].type = 0; // only singles early on
+            } else if (gameScore < 15) {
+                gameObs[i].type = (r < 70) ? 0 : 1;
+            } else {
+                gameObs[i].type = (r < 40) ? 0 : (r < 75) ? 1 : 2;
+            }
+            switch (gameObs[i].type) {
+                case 0: // single spike
+                    gameObs[i].halfW = 7 + random(4);
+                    gameObs[i].h = 20 + random(8);
+                    break;
+                case 1: // double spike (wider)
+                    gameObs[i].halfW = 14 + random(4);
+                    gameObs[i].h = 18 + random(6);
+                    break;
+                case 2: // tall spike
+                    gameObs[i].halfW = 6 + random(3);
+                    gameObs[i].h = 30 + random(8);
+                    break;
+            }
+            gameObs[i].active = true;
+            gameObs[i].scored = false;
+            return;
+        }
+    }
+}
+
+void gameDeathExplosion() {
+    float px = GAME_PLAYER_X;
+    float py = gamePlayerY + GAME_PLAYER_SZ;
+    uint16_t cols[] = {gamePlayerCol, gameAccentCol, COL_WHITE, COL_YELLOW, COL_RED};
+    for (int i = 0; i < 15; i++) {
+        float angle = (random(360)) * 0.01745f;
+        float spd = 1.5f + random(100) / 30.0f;
+        gameSpawnParticle(px, py, cosf(angle) * spd, sinf(angle) * spd,
+                          cols[random(5)], 12 + random(10));
+    }
+}
+
+void updateGame() {
+    if (gameState != GAME_PLAYING) {
+        // Still update death particles in GAME_OVER
+        if (gameState == GAME_OVER) {
+            for (int i = 0; i < GAME_MAX_PARTS; i++) {
+                if (!gameParts[i].active) continue;
+                gameParts[i].x += gameParts[i].vx;
+                gameParts[i].y += gameParts[i].vy;
+                gameParts[i].vy += 0.3f;
+                if (--gameParts[i].life <= 0) gameParts[i].active = false;
+            }
+        }
+        return;
+    }
+
+    // Physics: gravity + position
+    gameVelY += GAME_GRAVITY;
+    gamePlayerY += gameVelY;
+    float groundPos = GAME_GROUND_Y - GAME_PLAYER_SZ * 2;
+    if (gamePlayerY >= groundPos) {
+        gamePlayerY = groundPos;
+        if (!gameOnGround) {
+            gameLandMs = millis();
+            gameSquash = 0.7f; // squash on landing
+        }
+        gameVelY = 0;
+        gameOnGround = true;
+        gameCanDouble = false;
+        gamePlayerRot = 0; // snap upright on ground
+    }
+
+    // Rotation while airborne
+    if (!gameOnGround) {
+        gamePlayerRot += 0.18f;
+    }
+
+    // Squash recovery
+    if (gameSquash < 1.0f) {
+        gameSquash += 0.06f;
+        if (gameSquash > 1.0f) gameSquash = 1.0f;
+    }
+
+    // Trail particles while jumping
+    if (!gameOnGround && random(3) == 0) {
+        gameSpawnParticle(
+            GAME_PLAYER_X - GAME_PLAYER_SZ + random(4),
+            gamePlayerY + GAME_PLAYER_SZ * 2,
+            -0.5f - random(100) / 100.0f, 0.5f + random(100) / 100.0f,
+            gameAccentCol, 6 + random(4));
+    }
+
+    // Update particles
+    for (int i = 0; i < GAME_MAX_PARTS; i++) {
+        if (!gameParts[i].active) continue;
+        gameParts[i].x += gameParts[i].vx;
+        gameParts[i].y += gameParts[i].vy;
+        gameParts[i].vy += 0.15f;
+        if (--gameParts[i].life <= 0) gameParts[i].active = false;
+    }
+
+    // Update background stars
+    for (int i = 0; i < GAME_MAX_STARS; i++) {
+        gameStars[i].x -= gameSpeed * gameStars[i].speed;
+        if (gameStars[i].x < -2) {
+            gameStars[i].x = 242;
+            gameStars[i].y = 20 + random(GAME_GROUND_Y - 40);
+        }
+    }
+
+    // Update background columns
+    for (int i = 0; i < GAME_MAX_COLS; i++) {
+        gameBgCols[i].x -= gameSpeed * gameBgCols[i].speed;
+        if (gameBgCols[i].x + gameBgCols[i].w < -5) {
+            gameBgCols[i].x = 245 + random(40);
+            gameBgCols[i].w = 12 + random(20);
+            gameBgCols[i].h = 25 + random(50);
+        }
+    }
+
+    // Accumulate ground scroll for perspective lines
+    gameBgScroll += gameSpeed;
+
+    // Move obstacles left
+    for (int i = 0; i < GAME_MAX_OBS; i++) {
+        if (!gameObs[i].active) continue;
+        gameObs[i].x -= gameSpeed;
+        if (gameObs[i].x < -30) {
+            gameObs[i].active = false;
+            continue;
+        }
+        // Score when obstacle passes player
+        if (!gameObs[i].scored && gameObs[i].x < GAME_PLAYER_X - GAME_PLAYER_SZ) {
+            gameObs[i].scored = true;
+            gameScore++;
+            // Score particle burst
+            gameSpawnParticle(GAME_PLAYER_X + 20, gamePlayerY,
+                              1.5f, -1.5f, COL_GOLD, 10);
+            // Speed up every 5 points (gentler curve)
+            if (gameScore % 5 == 0) {
+                gameSpeed += 0.3f;
+                if (gameSpeed > 7.0f) gameSpeed = 7.0f; // cap
+            }
+            // Milestone flash every 10 points
+            if (gameScore % 10 == 0) {
+                gameFlashTimer = 8;
+                gameFlashCol = gameAccentCol;
+                gameUpdateTheme();
+            }
+        }
+    }
+
+    // Flash countdown
+    if (gameFlashTimer > 0) gameFlashTimer--;
+
+    // Spawn new obstacles
+    gameSpawnDist -= gameSpeed;
+    if (gameSpawnDist <= 0) {
+        gameSpawnObstacle();
+        // Gap scales with speed to stay fair — wider gaps at higher speeds
+        float minGap = 55 + gameSpeed * 4;
+        float maxGap = minGap + 40;
+        gameSpawnDist = minGap + random((int)maxGap - (int)minGap);
+    }
+
+    // Collision detection: player square vs triangle obstacles
+    int sz = GAME_PLAYER_SZ;
+    // Shrink hitbox slightly for fairness (4px inset on each side)
+    float pLeft   = GAME_PLAYER_X - sz + 4;
+    float pRight  = GAME_PLAYER_X + sz - 4;
+    float pTop    = gamePlayerY + 4;
+    float pBottom = gamePlayerY + sz * 2 - 2;
+
+    for (int i = 0; i < GAME_MAX_OBS; i++) {
+        if (!gameObs[i].active) continue;
+        float ox = gameObs[i].x;
+        int hw = gameObs[i].halfW;
+        int oh = gameObs[i].h;
+
+        if (gameObs[i].type == 1) {
+            // Double spike: two triangles side by side
+            // Check each spike: left spike at ox - hw/2, right spike at ox + hw/2
+            for (int s = -1; s <= 1; s += 2) {
+                float sx = ox + s * (hw / 2.0f);
+                int shw = hw / 3;
+                float tLeft = sx - shw, tRight = sx + shw;
+                float tTop = GAME_GROUND_Y - oh;
+                if (pRight <= tLeft || pLeft >= tRight || pBottom <= tTop) continue;
+                float overlapMid = (max(pLeft, tLeft) + min(pRight, tRight)) / 2.0f;
+                float distEdge = min(overlapMid - tLeft, tRight - overlapMid);
+                float triTopAtX = GAME_GROUND_Y - oh * distEdge / (float)shw;
+                if (pBottom > triTopAtX + 4) {
+                    gameState = GAME_OVER;
+                    if (gameScore > gameHiScore) gameHiScore = gameScore;
+                    gameDeathExplosion();
+                    chimeDeath();
+                    return;
+                }
+            }
+        } else {
+            // Single or tall spike
+            float tLeft  = ox - hw;
+            float tRight = ox + hw;
+            float tTop   = GAME_GROUND_Y - oh;
+            if (pRight <= tLeft || pLeft >= tRight || pBottom <= tTop) continue;
+            float overlapMid = (max(pLeft, tLeft) + min(pRight, tRight)) / 2.0f;
+            float distEdge = min(overlapMid - tLeft, tRight - overlapMid);
+            float triTopAtX = GAME_GROUND_Y - oh * distEdge / (float)hw;
+            if (pBottom > triTopAtX + 4) {
+                gameState = GAME_OVER;
+                if (gameScore > gameHiScore) gameHiScore = gameScore;
+                gameDeathExplosion();
+                chimeDeath();
+                return;
+            }
+        }
+    }
+}
+
+// ── Geometry Dash: Drawing ─────────────────────────────────────
+void drawGameRotatedSquare(int cx, int cy, int sz, float angle, uint16_t fillCol, uint16_t outCol) {
+    // Draw a rotated square using 4 corner points
+    float c = cosf(angle), s = sinf(angle);
+    int px[4], py[4];
+    float offsets[4][2] = {{-1,-1},{1,-1},{1,1},{-1,1}};
+    for (int i = 0; i < 4; i++) {
+        float ox = offsets[i][0] * sz;
+        float oy = offsets[i][1] * sz;
+        px[i] = cx + (int)(ox * c - oy * s);
+        py[i] = cy + (int)(ox * s + oy * c);
+    }
+    // Fill with two triangles
+    spr.fillTriangle(px[0], py[0], px[1], py[1], px[2], py[2], fillCol);
+    spr.fillTriangle(px[0], py[0], px[2], py[2], px[3], py[3], fillCol);
+    // Outline
+    for (int i = 0; i < 4; i++) {
+        int j = (i + 1) % 4;
+        spr.drawLine(px[i], py[i], px[j], py[j], outCol);
+    }
+}
+
+void drawGameScreen() {
+    spr.fillSprite(COL_BG);
+    drawCircleBorder();
+
+    if (gameState == GAME_READY) {
+        // Animated background stars on title
+        static float titleStarX[8];
+        static bool titleInit = false;
+        if (!titleInit) {
+            for (int i = 0; i < 8; i++) titleStarX[i] = random(240);
+            titleInit = true;
+        }
+        for (int i = 0; i < 8; i++) {
+            int sy = 30 + i * 22;
+            titleStarX[i] -= 0.5f;
+            if (titleStarX[i] < 0) titleStarX[i] = 240;
+            spr.drawPixel((int)titleStarX[i], sy, COL_DARK_GRAY);
+            spr.drawPixel((int)titleStarX[i] + 1, sy, COL_MID_GRAY);
+        }
+
+        // Title with color cycling
+        bool flash = (millis() / 600) % 2;
+        spr.setTextColor(flash ? COL_CYAN : COL_MAGENTA, COL_BG);
+        spr.drawString("GEOMETRY", 120, 52, 4);
+        spr.setTextColor(flash ? COL_MAGENTA : COL_CYAN, COL_BG);
+        spr.drawString("DASH", 120, 80, 4);
+
+        // Animated player + obstacle scene
+        int animY = 135;
+        // Ground
+        spr.drawFastHLine(40, animY + 14, 160, COL_DARK_GRAY);
+        // Bouncing player
+        int bounce = abs((int)((millis() / 150) % 12) - 6);
+        spr.fillRect(85, animY - bounce, 14, 14, COL_GREEN);
+        spr.drawRect(85, animY - bounce, 14, 14, COL_WHITE);
+        // Trail
+        for (int t = 0; t < 3; t++) {
+            spr.fillRect(75 - t * 12, animY + 2 + t, 6 - t, 6 - t, COL_CYAN);
+        }
+        // Triangles
+        uint16_t triCols[] = {COL_RED, COL_ORANGE, COL_MAGENTA};
+        int triX[] = {120, 145, 165};
+        int triH[] = {14, 18, 12};
+        for (int t = 0; t < 3; t++) {
+            spr.fillTriangle(triX[t], animY + 14 - triH[t],
+                             triX[t] - 5, animY + 14,
+                             triX[t] + 5, animY + 14, triCols[t]);
+        }
+
+        spr.setTextColor(COL_WHITE, COL_BG);
+        spr.drawString("Press SET to play", 120, 168, 2);
+
+        spr.setTextColor(COL_MID_GRAY, COL_BG);
+        spr.drawString("Double-tap to double jump!", 120, 186, 1);
+
+        if (gameHiScore > 0) {
+            spr.setTextColor(COL_GOLD, COL_BG);
+            char buf[20];
+            sprintf(buf, "Best: %d", gameHiScore);
+            spr.drawString(buf, 120, 208, 2);
+        }
+
+        drawScreenIndicator(SCREEN_GAME);
+        spr.pushSprite(0, 0);
+        return;
+    }
+
+    if (gameState == GAME_CONFIRM_EXIT) {
+        // Dim background with border
+        spr.drawCircle(120, 120, 80, COL_DARK_GRAY);
+
+        spr.setTextColor(COL_YELLOW, COL_BG);
+        spr.drawString("PAUSED", 120, 65, 4);
+
+        spr.setTextColor(COL_WHITE, COL_BG);
+        char buf[20];
+        sprintf(buf, "Score: %d", gameScore);
+        spr.drawString(buf, 120, 105, 4);
+
+        // Speed indicator
+        spr.setTextColor(COL_MID_GRAY, COL_BG);
+        char speedBuf[16];
+        sprintf(speedBuf, "Speed: %.1f", gameSpeed);
+        spr.drawString(speedBuf, 120, 132, 2);
+
+        spr.setTextColor(COL_GREEN, COL_BG);
+        spr.drawString("SET = Resume", 120, 162, 2);
+        spr.setTextColor(COL_RED, COL_BG);
+        spr.drawString("BACK = Quit", 120, 182, 2);
+
+        spr.pushSprite(0, 0);
+        return;
+    }
+
+    if (gameState == GAME_OVER) {
+        // Death particles still render
+        for (int i = 0; i < GAME_MAX_PARTS; i++) {
+            if (!gameParts[i].active) continue;
+            int px = (int)gameParts[i].x, py = (int)gameParts[i].y;
+            if (px > 5 && px < 235 && py > 5 && py < 235) {
+                int r = (gameParts[i].life > 8) ? 3 : (gameParts[i].life > 4) ? 2 : 1;
+                spr.fillCircle(px, py, r, gameParts[i].col);
+            }
+        }
+
+        bool isNewHi = (gameScore == gameHiScore && gameScore > 0);
+        bool flash = (millis() / 300) % 2;
+
+        if (isNewHi) {
+            spr.setTextColor(flash ? COL_GOLD : COL_YELLOW, COL_BG);
+            spr.drawString("NEW BEST!", 120, 45, 4);
+        }
+
+        spr.setTextColor(COL_RED, COL_BG);
+        spr.drawString("GAME OVER", 120, 70, 4);
+
+        spr.setTextColor(COL_WHITE, COL_BG);
+        char buf[32];
+        sprintf(buf, "%d", gameScore);
+        spr.drawString(buf, 120, 108, 7);
+
+        if (!isNewHi && gameHiScore > 0) {
+            spr.setTextColor(COL_GOLD, COL_BG);
+            sprintf(buf, "Best: %d", gameHiScore);
+            spr.drawString(buf, 120, 148, 2);
+        }
+
+        spr.setTextColor(COL_CYAN, COL_BG);
+        spr.drawString("SET = Retry", 120, 178, 2);
+        spr.setTextColor(COL_MID_GRAY, COL_BG);
+        spr.drawString("BACK = Exit", 120, 196, 2);
+
+        spr.pushSprite(0, 0);
+        return;
+    }
+
+    // ── GAME_PLAYING: render the game ──
+
+    // Tinted background fill
+    if (gameBgCol != 0x0000) {
+        // Fill play area with subtle tint (inside circle)
+        for (int y = 20; y < GAME_GROUND_Y; y += 4) {
+            // Approximate circle clipping
+            int dy = abs(y - 120);
+            if (dy > 116) continue;
+            int hw = (int)sqrtf(116 * 116 - dy * dy);
+            int x0 = max(120 - hw, 4);
+            int x1 = min(120 + hw, 236);
+            spr.drawFastHLine(x0, y, x1 - x0, gameBgCol);
+        }
+    }
+
+    // Background silhouette columns (farthest layer — city/mountains)
+    for (int i = 0; i < GAME_MAX_COLS; i++) {
+        int bx = (int)gameBgCols[i].x;
+        int bw = gameBgCols[i].w;
+        int bh = gameBgCols[i].h;
+        // Draw from ground upward
+        int by = GAME_GROUND_Y - bh;
+        if (bx + bw < 10 || bx > 230) continue;
+        // Clip to circle roughly
+        spr.fillRect(max(bx, 10), max(by, 20), min(bw, 230 - max(bx, 10)),
+                      GAME_GROUND_Y - max(by, 20), gameBgCols[i].col);
+        // Top cap (slight trapezoid look — 2px narrower on top)
+        spr.fillRect(max(bx + 1, 10), max(by - 2, 20),
+                      max(min(bw - 2, 230 - max(bx + 1, 10)), 0), 2, gameBgCols[i].col);
+    }
+
+    // Background stars (parallax) — streaks at high speed
+    for (int i = 0; i < GAME_MAX_STARS; i++) {
+        int sx = (int)gameStars[i].x, sy = (int)gameStars[i].y;
+        if (sx > 5 && sx < 235 && sy > 15 && sy < GAME_GROUND_Y - 5) {
+            if (gameSpeed > 4.5f) {
+                // Draw as speed streak
+                int streakLen = (int)(gameSpeed * gameStars[i].speed * 3);
+                spr.drawFastHLine(sx, sy, min(streakLen, 235 - sx), gameStars[i].col);
+            } else {
+                spr.drawPixel(sx, sy, gameStars[i].col);
+            }
+        }
+    }
+
+    // Milestone flash overlay
+    if (gameFlashTimer > 0) {
+        spr.drawCircle(120, 120, 100 - gameFlashTimer * 5, gameFlashCol);
+        spr.drawCircle(120, 120, 101 - gameFlashTimer * 5, gameFlashCol);
+    }
+
+    // Ground: solid line + texture
+    spr.drawFastHLine(15, GAME_GROUND_Y, 210, gameGroundCol);
+    spr.drawFastHLine(15, GAME_GROUND_Y + 1, 210, gameGroundCol);
+
+    // Perspective ground lines — converge to vanishing point at horizon
+    int vpX = 120, vpY = GAME_GROUND_Y - 80; // vanishing point
+    int scrollOff = ((int)gameBgScroll) % 30;
+    for (int gx = -30 - scrollOff; gx < 260; gx += 30) {
+        // Lines from ground edge to vanishing point — faded
+        int fromX = gx;
+        int fromY = GAME_GROUND_Y + 12;
+        // Only draw the bottom portion (from ground down)
+        if (fromX > 10 && fromX < 230) {
+            spr.drawLine(fromX, fromY, vpX, vpY, gameGroundCol);
+        }
+    }
+
+    // Horizontal depth lines below ground (scrolling perspective floor)
+    int depthLines[] = {3, 7, 13, 21};
+    for (int d = 0; d < 4; d++) {
+        int ly = GAME_GROUND_Y + depthLines[d];
+        if (ly > 230) continue;
+        // Each line is dimmer as it goes down
+        uint16_t lCol = gameGroundCol;
+        int lx0 = 15 + d * 8;
+        int lx1 = 225 - d * 8;
+        spr.drawFastHLine(lx0, ly, lx1 - lx0, lCol);
+    }
+
+    // Particles (behind player)
+    for (int i = 0; i < GAME_MAX_PARTS; i++) {
+        if (!gameParts[i].active) continue;
+        int px = (int)gameParts[i].x, py = (int)gameParts[i].y;
+        if (px > 5 && px < 235 && py > 5 && py < 235) {
+            if (gameParts[i].life > 5)
+                spr.fillCircle(px, py, 2, gameParts[i].col);
+            else
+                spr.drawPixel(px, py, gameParts[i].col);
+        }
+    }
+
+    // Draw obstacles
+    for (int i = 0; i < GAME_MAX_OBS; i++) {
+        if (!gameObs[i].active) continue;
+        int ox = (int)gameObs[i].x;
+        int hw = gameObs[i].halfW;
+        int oh = gameObs[i].h;
+
+        // Color based on type
+        uint16_t obsCol, obsHighlight;
+        switch (gameObs[i].type) {
+            case 0: obsCol = COL_RED;     obsHighlight = COL_ORANGE;  break;
+            case 1: obsCol = COL_MAGENTA; obsHighlight = COL_LIGHT_BLUE; break;
+            case 2: obsCol = COL_ORANGE;  obsHighlight = COL_YELLOW;  break;
+            default: obsCol = COL_RED;    obsHighlight = COL_ORANGE;  break;
+        }
+
+        if (gameObs[i].type == 1) {
+            // Double spike: two triangles
+            int gap = hw / 2;
+            int shw = hw / 3;
+            for (int s = -1; s <= 1; s += 2) {
+                int sx = ox + s * gap;
+                spr.fillTriangle(sx, GAME_GROUND_Y - oh,
+                                 sx - shw, GAME_GROUND_Y,
+                                 sx + shw, GAME_GROUND_Y, obsCol);
+                spr.drawLine(sx, GAME_GROUND_Y - oh,
+                             sx - shw, GAME_GROUND_Y, obsHighlight);
+                // Inner highlight
+                spr.drawLine(sx, GAME_GROUND_Y - oh,
+                             sx + shw, GAME_GROUND_Y, obsCol);
+            }
+        } else {
+            // Single or tall spike
+            spr.fillTriangle(ox, GAME_GROUND_Y - oh,
+                             ox - hw, GAME_GROUND_Y,
+                             ox + hw, GAME_GROUND_Y, obsCol);
+            // Left highlight edge
+            spr.drawLine(ox, GAME_GROUND_Y - oh,
+                         ox - hw, GAME_GROUND_Y, obsHighlight);
+            // Right darker edge
+            spr.drawLine(ox, GAME_GROUND_Y - oh,
+                         ox + hw, GAME_GROUND_Y, obsCol);
+            // Inner glow line
+            if (oh > 22) {
+                spr.drawLine(ox, GAME_GROUND_Y - oh + 3,
+                             ox - hw + 3, GAME_GROUND_Y, obsHighlight);
+            }
+        }
+    }
+
+    // Draw player
+    int py = (int)gamePlayerY;
+    int sz = GAME_PLAYER_SZ;
+    int cx = GAME_PLAYER_X;
+    int cy = py + sz; // center of square
+
+    // Apply squash/stretch
+    int drawW = (int)(sz * (2.0f - gameSquash));
+    int drawH = (int)(sz * gameSquash);
+
+    if (!gameOnGround) {
+        // Rotated square while airborne
+        drawGameRotatedSquare(cx, cy, sz, gamePlayerRot, gamePlayerCol, COL_WHITE);
+        // Eye (relative to rotation)
+        float ec = cosf(gamePlayerRot), es = sinf(gamePlayerRot);
+        int ex = cx + (int)(4 * ec - (-4) * es);
+        int ey = cy + (int)(4 * es + (-4) * ec);
+        spr.fillCircle(ex, ey, 3, COL_BG);
+        spr.fillCircle(ex + 1, ey, 2, COL_WHITE);
+        // Double-jump indicator
+        if (gameCanDouble) {
+            spr.drawCircle(cx, cy, sz + 4, gameAccentCol);
+        }
+    } else {
+        // Ground: squash/stretch rectangle
+        int rx = cx - drawW;
+        int ry = cy - drawH + (sz - drawH); // keep bottom aligned
+        spr.fillRect(rx, ry, drawW * 2, drawH * 2, gamePlayerCol);
+        spr.drawRect(rx, ry, drawW * 2, drawH * 2, COL_WHITE);
+        // Eye
+        spr.fillRect(cx + 2, ry + 3, 5, 5, COL_BG);
+        spr.fillRect(cx + 3, ry + 4, 3, 3, COL_WHITE);
+    }
+
+    // Score display at top
+    if (gameFlashTimer > 0 && gameFlashTimer % 2 == 0) {
+        spr.setTextColor(gameFlashCol, COL_BG);
+    } else {
+        spr.setTextColor(COL_WHITE, COL_BG);
+    }
+    char scoreBuf[16];
+    sprintf(scoreBuf, "%d", gameScore);
+    spr.drawString(scoreBuf, 120, 22, 4);
+
+    // Speed bar at top-right
+    int barW = min((int)(gameSpeed * 5), 40);
+    uint16_t barCol = (gameSpeed < 4) ? COL_GREEN : (gameSpeed < 5.5f) ? COL_YELLOW : COL_RED;
+    spr.fillRect(195 - barW, 12, barW, 4, barCol);
+    spr.drawRect(155, 12, 40, 4, COL_DARK_GRAY);
+
+    spr.pushSprite(0, 0);
+}
+
 // ── Handle Button Actions ───────────────────────────────────────
 void handleButtons() {
+    // ── Alarm ringing — global intercept ──
+    if (alarmRinging) {
+        if (buttons[0].pressed) {   // BACK — stop alarm
+            chimeBack();
+            alarmStop();
+            // Stay on alarm screen so user sees it stopped
+        }
+        if (buttons[2].pressed) {   // NEXT — snooze (if enabled)
+            if (alarmSnoozeMin > 0) {
+                chimeNext();
+                alarmSnooze();
+            }
+            // If snooze disabled, NEXT does nothing — must press BACK to stop
+        }
+        return; // Block all other button handling while alarm rings
+    }
+
     // ── Clock settings (manual time/date when no WiFi) ──
     if (clockInSettings) {
         if (buttons[1].pressed) {  // SETTINGS — cycle field
@@ -1182,6 +2015,13 @@ void handleButtons() {
                 pomoEditing = false;
             }
         }
+        // Long-press NEXT — navigate to next screen
+        if (buttons[2].holding && !buttons[2].holdFired &&
+            (millis() - buttons[2].holdStart > HOLD_MS)) {
+            buttons[2].holdFired = true;
+            chimeNext();
+            currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
+        }
         // Long-press BACK — exit to watch face
         if (buttons[0].holding && !buttons[0].holdFired &&
             (millis() - buttons[0].holdStart > HOLD_MS)) {
@@ -1195,6 +2035,85 @@ void handleButtons() {
         return;
     }
 
+    // ── Game screen buttons ──
+    if (currentScreen == SCREEN_GAME) {
+        if (gameState == GAME_READY) {
+            if (buttons[1].pressed) {   // SETTINGS — start game
+                chimeSettings();
+                gameReset();
+                gameState = GAME_PLAYING;
+            }
+            if (buttons[2].pressed) {   // NEXT — next screen
+                chimeNext();
+                currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
+            }
+            if (buttons[0].pressed) {   // BACK — previous screen
+                chimeBack();
+                currentScreen = (Screen)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+            }
+            return;
+        }
+        if (gameState == GAME_PLAYING) {
+            if (buttons[2].pressed) {   // NEXT — jump / double-jump
+                if (gameOnGround) {
+                    chimeJump();
+                    gameVelY = GAME_JUMP_VEL;
+                    gameOnGround = false;
+                    gameCanDouble = true;
+                    // Jump particle burst
+                    for (int p = 0; p < 4; p++) {
+                        gameSpawnParticle(
+                            GAME_PLAYER_X - 6 + random(12),
+                            GAME_GROUND_Y,
+                            -1.0f + random(200) / 100.0f, -1.0f - random(100) / 100.0f,
+                            gameGroundCol + 0x2104, 5 + random(3));
+                    }
+                } else if (gameCanDouble) {
+                    chimeJump();
+                    gameVelY = GAME_JUMP_VEL * 0.85f; // slightly weaker
+                    gameCanDouble = false;
+                    gamePlayerRot += 0.5f; // spin boost
+                    // Double-jump sparkle
+                    for (int p = 0; p < 3; p++) {
+                        gameSpawnParticle(
+                            GAME_PLAYER_X, gamePlayerY + GAME_PLAYER_SZ,
+                            -1.5f + random(300) / 100.0f, 1.0f + random(100) / 100.0f,
+                            gameAccentCol, 6);
+                    }
+                }
+            }
+            if (buttons[0].pressed) {   // BACK — confirm exit
+                gameState = GAME_CONFIRM_EXIT;
+            }
+            return;
+        }
+        if (gameState == GAME_CONFIRM_EXIT) {
+            if (buttons[1].pressed) {   // SETTINGS — resume
+                chimeSettings();
+                gameFrameMs = millis();
+                gameState = GAME_PLAYING;
+            }
+            if (buttons[0].pressed) {   // BACK — confirm quit
+                chimeBack();
+                gameState = GAME_READY;
+            }
+            return;
+        }
+        if (gameState == GAME_OVER) {
+            if (buttons[1].pressed) {   // SETTINGS — retry
+                chimeSettings();
+                gameReset();
+                gameState = GAME_PLAYING;
+            }
+            if (buttons[0].pressed) {   // BACK — exit to ready
+                chimeBack();
+                gameState = GAME_READY;
+            }
+            return;
+        }
+        return;
+    }
+
     // ── Other screens ──
     // NEXT button (GPIO 2) — switch screen or sub-mode
     if (buttons[2].pressed) {
@@ -1204,8 +2123,10 @@ void handleButtons() {
                 alarmHour = (alarmHour + 1) % 24;
             } else if (settingsField == 1) {
                 alarmMinute = (alarmMinute + 1) % 60;
-            } else {
+            } else if (settingsField == 2) {
                 alarmEnabled = !alarmEnabled;
+            } else {
+                alarmSnoozeMin = (alarmSnoozeMin + 1) % 16; // 0-15 minutes
             }
         } else if (currentScreen == SCREEN_TIMER) {
             if (timerMode == TIMER_STOPWATCH) {
@@ -1235,7 +2156,7 @@ void handleButtons() {
             clockInSettings = true;
         } else if (currentScreen == SCREEN_TIMER && timerMode == TIMER_ALARM) {
             if (inSettings) {
-                settingsField = (settingsField + 1) % 3;
+                settingsField = (settingsField + 1) % 4;
             } else {
                 inSettings = true;
                 settingsField = 0;
@@ -1275,7 +2196,72 @@ void handleButtons() {
 }
 
 // ── Alarm Check ─────────────────────────────────────────────────
+void alarmStartRinging() {
+    // Remember where user was before switching
+    alarmPrevScreen = currentScreen;
+    alarmRinging = true;
+    alarmSnoozing = false;
+    alarmLastChime = 0;  // force immediate first note
+    alarmNoteIdx = 0;    // start melody from beginning
+    currentScreen = SCREEN_TIMER;
+    timerMode = TIMER_ALARM;
+    inSettings = false;
+}
+
+void alarmStop() {
+    alarmRinging = false;
+    alarmSnoozing = false;
+    ledcWriteTone(BUZZER_CH, 0); // silence buzzer immediately
+}
+
+void alarmSnooze() {
+    alarmRinging = false;
+    ledcWriteTone(BUZZER_CH, 0);
+    alarmSnoozing = true;
+    alarmSnoozeEnd = millis() + (unsigned long)alarmSnoozeMin * 60000UL;
+    // Return to previous screen
+    currentScreen = alarmPrevScreen;
+}
+
 void checkAlarm() {
+    // Space Invaders-style continuous alarm melody (non-blocking, one note per step)
+    if (alarmRinging) {
+        // Melody: classic descending 4-note march + rising urgency phrase, looping
+        static const uint16_t alarmMelody[] = {
+            // Space Invaders march (bass)
+            196, 0, 164, 0, 146, 0, 130, 0,   // G3 - E3 - D3 - C3
+            196, 0, 164, 0, 146, 0, 130, 0,   // repeat
+            // Rising urgency
+            262, 0, 330, 0, 392, 0, 523, 0,   // C4 - E4 - G4 - C5
+            // Attack phrase
+            784, 0, 659, 0, 784, 0, 1047, 0,  // G5 - E5 - G5 - C6
+            // Descend resolve
+            880, 0, 784, 0, 659, 0, 523, 0,   // A5 - G5 - E5 - C5
+        };
+        static const int alarmMelodyLen = sizeof(alarmMelody) / sizeof(alarmMelody[0]);
+
+        unsigned long now = millis();
+        if (now - alarmLastChime >= 120) {  // 120ms per step
+            alarmLastChime = now;
+            uint16_t freq = alarmMelody[alarmNoteIdx];
+            if (freq == 0) {
+                ledcWriteTone(BUZZER_CH, 0); // rest
+            } else {
+                ledcWriteTone(BUZZER_CH, freq);
+            }
+            alarmNoteIdx = (alarmNoteIdx + 1) % alarmMelodyLen;
+        }
+        return;
+    }
+
+    // Check snooze expiry
+    if (alarmSnoozing) {
+        if (millis() >= alarmSnoozeEnd) {
+            alarmStartRinging();
+        }
+        return;
+    }
+
     if (!alarmEnabled) {
         alarmTriggered = false;
         return;
@@ -1286,7 +2272,7 @@ void checkAlarm() {
 
     if (t.tm_hour == alarmHour && t.tm_min == alarmMinute && !alarmTriggered) {
         alarmTriggered = true;
-        chimeAlarm();
+        alarmStartRinging();
     }
     if (t.tm_min != alarmMinute) {
         alarmTriggered = false;
@@ -1346,12 +2332,14 @@ void loop() {
     checkAlarm();
     updateWeather();
     updatePomodoro();
+    updateGame();
 
     switch (currentScreen) {
         case SCREEN_CLOCK:    drawClockScreen();    break;
         case SCREEN_WEATHER:  drawWeatherScreen();  break;
         case SCREEN_TIMER:    drawTimerScreen();     break;
         case SCREEN_POMODORO: drawPomodoroScreen();  break;
+        case SCREEN_GAME:     drawGameScreen();      break;
         default: break;
     }
 
