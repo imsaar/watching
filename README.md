@@ -39,6 +39,9 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
     -   Continuous Space Invaders-style alarm melody (looping march + urgency phrases).
     -   Pomodoro break start (descending) and break end (ascending) melodies.
     -   Game: jump blip, death crash sound, score chime.
+-   **Persistent Settings**:
+    -   Alarm configuration, game high score, and Pomodoro intervals are saved to non-volatile storage (ESP32 NVS) and survive power cycles.
+    -   Settings save automatically when exiting configuration screens or setting a new high score.
 -   **Connectivity**:
     -   Automatic WiFi connection for NTP time synchronization and weather fetching.
     -   Dynamic updates for weather data every 10 minutes.
@@ -115,6 +118,7 @@ src/
   hijri.h/.cpp       — Gregorian to Hijri calendar conversion
   weather.h/.cpp     — Weather data, Open-Meteo API fetch, weather icons
   wifi_ntp.h/.cpp    — WiFi connection and NTP time sync
+  storage.h/.cpp     — NVS persistence for user settings
   screen_clock.h/.cpp    — Watch face screen
   screen_weather.h/.cpp  — Weather dashboard screen
   screen_timer.h/.cpp    — Analog clock, alarm, and stopwatch screen
