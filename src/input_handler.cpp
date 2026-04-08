@@ -3,6 +3,7 @@
 #include "globals.h"
 #include "buttons.h"
 #include "buzzer.h"
+#include "storage.h"
 #include "screen_clock.h"
 #include "screen_timer.h"
 #include "screen_pomodoro.h"
@@ -71,6 +72,7 @@ void handleButtons() {
                     else                pomoBreakMin = max(pomoBreakMin - 1, 1);
                 } else {
                     pomoInSettings = false;
+                    savePomodoroSettings();
                 }
             }
             if (buttons[1].pressed) {
@@ -280,6 +282,7 @@ void handleButtons() {
         if (inSettings) {
             inSettings = false;
             alarmTriggered = false;
+            saveAlarmSettings();
         } else if (currentScreen == SCREEN_TIMER && timerMode == TIMER_ALARM) {
             timerMode = TIMER_CLOCK;
         } else {

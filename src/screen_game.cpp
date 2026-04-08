@@ -2,6 +2,7 @@
 #include "config.h"
 #include "globals.h"
 #include "buzzer.h"
+#include "storage.h"
 #include <math.h>
 
 // ── Game State ──────────────────────────────────────────────────
@@ -290,7 +291,7 @@ void updateGame() {
                 float triTopAtX = GAME_GROUND_Y - oh * distEdge / (float)shw;
                 if (pBottom > triTopAtX + 4) {
                     gameState = GAME_OVER;
-                    if (gameScore > gameHiScore) gameHiScore = gameScore;
+                    if (gameScore > gameHiScore) { gameHiScore = gameScore; saveGameHiScore(); }
                     gameDeathExplosion();
                     chimeDeath();
                     return;
@@ -306,7 +307,7 @@ void updateGame() {
             float triTopAtX = GAME_GROUND_Y - oh * distEdge / (float)hw;
             if (pBottom > triTopAtX + 4) {
                 gameState = GAME_OVER;
-                if (gameScore > gameHiScore) gameHiScore = gameScore;
+                if (gameScore > gameHiScore) { gameHiScore = gameScore; saveGameHiScore(); }
                 gameDeathExplosion();
                 chimeDeath();
                 return;

@@ -28,6 +28,7 @@
 #include "screen_game.h"
 #include "screen_pomodoro.h"
 #include "input_handler.h"
+#include "storage.h"
 
 void setup() {
     // Silence buzzer as early as possible
@@ -67,6 +68,8 @@ void setup() {
     buzzerTone(659, 120);  // E5
     delay(30);
     buzzerTone(784, 200);  // G5 — held slightly longer to resolve
+
+    loadSettings();
 
     connectWiFi();
     syncTime();
