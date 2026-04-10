@@ -45,9 +45,12 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
     -   Alarm configuration, game high score, and Pomodoro intervals are saved to non-volatile storage (ESP32 NVS) and survive power cycles.
     -   Settings save automatically when exiting configuration screens or setting a new high score.
 -   **OTA Updates**:
-    -   **ArduinoOTA**: Flash over WiFi from PlatformIO — `pio run -t upload --upload-port <IP>`.
+    -   **ArduinoOTA**: Flash over WiFi from PlatformIO — `pio run -e ota -t upload --upload-port <IP>`.
     -   **ElegantOTA**: Upload firmware via any web browser at `http://<IP>/update`.
     -   Progress bar displayed on watch during OTA upload.
+    -   Deep-sleep reboot after OTA for clean peripheral reset (avoids SPI crash on ESP32-C3 software reset).
+    -   Custom OTA-optimized partition table with ~1.9 MB per app slot.
+    -   **Rollback safety**: 30-second boot guard auto-rolls back on failed firmware. Hold BACK + NEXT during boot for manual rollback. 3-button emergency reboot (hold all 3 buttons for 2s).
     -   **Info screen**: Long-press SETTINGS on clock face to view firmware version, IP address, OTA URL, and free memory.
 -   **Connectivity**:
     -   Automatic WiFi connection for NTP time synchronization and weather fetching.
@@ -101,8 +104,9 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
 3.  **Location**: Update the `LATITUDE` and `LONGITUDE` constants in `include/config.h` for your local weather.
 4.  **Flash**: Connect your ESP32-C3 and run:
     ```bash
-    pio run --target upload
+    pio run -t upload
     ```
+    > **Note**: The first flash after cloning (or after changing `partitions.csv`) must be via USB so the new partition table is written. Subsequent updates can use OTA.
 
 ## 🎮 Controls
 
@@ -127,7 +131,8 @@ src/
   weather.h/.cpp     — Weather data, Open-Meteo API fetch, weather icons
   wifi_ntp.h/.cpp    — WiFi connection and NTP time sync
   storage.h/.cpp     — NVS persistence for user settings
-  ota.h/.cpp         — ArduinoOTA and ElegantOTA setup
+  ota.h/.cpp         — ArduinoOTA and ElegantOTA setup, rollback, boot validation
+partitions.csv        — Custom OTA partition table (dual 1.9 MB app slots)
   screen_info.h/.cpp — Info overlay (version, IP, OTA URL, memory)
   screen_clock.h/.cpp    — Watch face screen
   screen_weather.h/.cpp  — Weather dashboard screen

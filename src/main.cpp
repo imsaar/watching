@@ -84,7 +84,6 @@ void setup() {
     // Provides: emergency 3-button reboot + 30s OTA boot guard.
     xTaskCreate(rebootWatchTask, "reboot", 2048, NULL, 1, NULL);
 
-    // Initialize display immediately so post-OTA reboot clears the screen
     tft.init();
     tft.setRotation(0);
     tft.fillScreen(COL_BG);

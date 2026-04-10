@@ -7,6 +7,7 @@
 #include <ElegantOTA.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_sleep.h>
 
 static WebServer otaServer(80);
 static bool elegantOtaDone = false;
@@ -37,6 +38,7 @@ void otaSetup() {
 
     // ── ArduinoOTA (PlatformIO / CLI upload) ──
     ArduinoOTA.setHostname("esp32-watch");
+    ArduinoOTA.setRebootOnSuccess(false);  // we handle reboot ourselves
 
     ArduinoOTA.onStart([]() {
         printf("[OTA] ArduinoOTA update starting...\n");
@@ -101,8 +103,16 @@ void otaSetup() {
         spr.setTextColor(COL_WHITE, COL_BG);
         spr.drawString("Rebooting...", 120, 140, 2);
         spr.pushSprite(0, 0);
-        delay(1000);
-        ESP.restart();
+
+        // Deep-sleep wakeup instead of ESP.restart(). Software reset leaves
+        // SPI2 registers dirty, crashing tft.init() on next boot. Deep sleep
+        // fully resets all peripherals like a hardware power cycle.
+        printf("[OTA] Entering deep sleep for hardware-like reset...\n");
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(200);
+        esp_sleep_enable_timer_wakeup(1000);  // 1ms
+        esp_deep_sleep_start();
     });
 
     ArduinoOTA.onError([](ota_error_t error) {
@@ -149,6 +159,7 @@ void otaLoop() {
 
     if (elegantOtaDone) {
         elegantOtaDone = false;
+
         spr.fillSprite(COL_BG);
         spr.setTextDatum(MC_DATUM);
         spr.setTextColor(COL_GREEN, COL_BG);
@@ -156,8 +167,17 @@ void otaLoop() {
         spr.setTextColor(COL_WHITE, COL_BG);
         spr.drawString("Rebooting...", 120, 140, 2);
         spr.pushSprite(0, 0);
-        delay(1000);
-        ESP.restart();
+
+        // Use deep-sleep wakeup instead of ESP.restart(). A software reset
+        // (RTC_SW_SYS_RST) does NOT reset SPI2 peripheral registers, so
+        // the next boot's tft.init() crashes on stale SPI state. Deep sleep
+        // wakeup fully resets all digital peripherals like a hardware power cycle.
+        otaServer.stop();
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(200);
+        esp_sleep_enable_timer_wakeup(1000);  // 1ms
+        esp_deep_sleep_start();
     }
 }
 
