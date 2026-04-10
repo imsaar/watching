@@ -33,8 +33,8 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
     -   Configurable work/break intervals (default 25m/5m).
     -   Visual progress arc (red for work, green for break).
     -   Auto-transitions between work and break with distinct melodies.
-    -   NEXT to start/stop, BACK to reset, SETTINGS to configure.
-    -   Long-press NEXT to navigate to next screen, long-press BACK to exit to watch face.
+    -   BACK to start/pause/resume, long-press BACK to reset, SETTINGS to configure.
+    -   NEXT navigates to the next screen.
 -   **Audio Feedback**:
     -   Gentle startup melody (ascending G major arpeggio).
     -   Unique chimes for each button action.
@@ -108,12 +108,20 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
     ```
     > **Note**: The first flash after cloning (or after changing `partitions.csv`) must be via USB so the new partition table is written. Subsequent updates can use OTA.
 
+5.  **Recovery (exception loop)**: If the device is crash-looping and `pio run -t upload` fails, hold the **BOOT** button, press **RESET**, release **BOOT**, then flash manually:
+    ```bash
+    esptool --chip esp32c3 --port /dev/cu.usbmodem1101 write_flash \
+      0x0     .pio/build/esp32-c3-devkitm-1/bootloader.bin \
+      0x8000  .pio/build/esp32-c3-devkitm-1/partitions.bin \
+      0xe000  ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+      0x10000 .pio/build/esp32-c3-devkitm-1/firmware.bin
+    ```
+
 ## 🎮 Controls
 
 -   **NEXT**: Cycle forward through screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Game → Pomodoro → Watch. Adjusts values in settings. Jumps in Geometry Dash. Snoozes alarm when ringing.
 -   **SETTINGS**: Enter/edit alarm settings (hour, minute, on/off, snooze duration), start/stop the stopwatch (long-press to reset), configure Pomodoro, start/retry Geometry Dash, or set time/date manually on the watch face (when WiFi is disconnected).
--   **BACK**: Navigate to the previous screen, reset Pomodoro, pause/quit the game, stop the alarm, or exit settings. Long-press (1s) to exit Pomodoro to the watch face.
--   **Long-press NEXT** (Pomodoro): Navigate to next screen without starting the timer.
+-   **BACK**: Navigate to the previous screen, pause/quit the game, stop the alarm, or exit settings. In Pomodoro: start/pause/resume the timer (long-press to reset).
 
 ## 📁 Project Structure
 

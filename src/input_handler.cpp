@@ -95,8 +95,8 @@ void handleButtons() {
             return;
         }
 
-        if (buttons[2].pressed) {
-            chimeNext();
+        if (buttons[0].pressed) {
+            chimeBack();
             if (pomoState == POMO_IDLE) {
                 pomoState = POMO_WORK;
                 pomoTimeLeft = (unsigned long)pomoWorkMin * 60000UL;
@@ -111,11 +111,9 @@ void handleButtons() {
                 }
             }
         }
-        if (buttons[0].pressed) {
-            chimeBack();
-            pomoState = POMO_IDLE;
-            pomoRunning = false;
-            pomoTimeLeft = 0;
+        if (buttons[2].pressed) {
+            chimeNext();
+            currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
         }
         if (buttons[1].pressed) {
             if (pomoState == POMO_IDLE) {
@@ -125,22 +123,14 @@ void handleButtons() {
                 pomoEditing = false;
             }
         }
-        // Long-press NEXT — navigate to next screen
-        if (buttons[2].holding && !buttons[2].holdFired &&
-            (millis() - buttons[2].holdStart > HOLD_MS)) {
-            buttons[2].holdFired = true;
-            chimeNext();
-            currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
-        }
-        // Long-press BACK — exit to watch face
+        // Long-press BACK — reset timer
         if (buttons[0].holding && !buttons[0].holdFired &&
             (millis() - buttons[0].holdStart > HOLD_MS)) {
             buttons[0].holdFired = true;
+            chimeBack();
             pomoState = POMO_IDLE;
             pomoRunning = false;
             pomoTimeLeft = 0;
-            currentScreen = SCREEN_CLOCK;
-            chimeBack();
         }
         return;
     }
