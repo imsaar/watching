@@ -29,6 +29,8 @@
 #include "screen_pomodoro.h"
 #include "input_handler.h"
 #include "storage.h"
+#include "ota.h"
+#include "screen_info.h"
 
 void setup() {
     // Silence buzzer as early as possible
@@ -74,9 +76,11 @@ void setup() {
     connectWiFi();
     syncTime();
     updateWeather();
+    otaSetup();
 }
 
 void loop() {
+    otaLoop();
     updateButtons();
     handleButtons();
     checkAlarm();
@@ -84,13 +88,17 @@ void loop() {
     updatePomodoro();
     updateGame();
 
-    switch (currentScreen) {
-        case SCREEN_CLOCK:    drawClockScreen();    break;
-        case SCREEN_WEATHER:  drawWeatherScreen();  break;
-        case SCREEN_TIMER:    drawTimerScreen();    break;
-        case SCREEN_GAME:     drawGameScreen();     break;
-        case SCREEN_POMODORO: drawPomodoroScreen(); break;
-        default: break;
+    if (showInfoScreen) {
+        drawInfoScreen();
+    } else {
+        switch (currentScreen) {
+            case SCREEN_CLOCK:    drawClockScreen();    break;
+            case SCREEN_WEATHER:  drawWeatherScreen();  break;
+            case SCREEN_TIMER:    drawTimerScreen();    break;
+            case SCREEN_GAME:     drawGameScreen();     break;
+            case SCREEN_POMODORO: drawPomodoroScreen(); break;
+            default: break;
+        }
     }
 
     delay(50); // ~20fps

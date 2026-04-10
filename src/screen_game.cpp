@@ -16,7 +16,11 @@ float  gamePlayerRot = 0;
 static float  gameSquash    = 1.0f;
 static unsigned long gameLandMs = 0;
 
-#define GAME_MAX_OBS     6
+// Obstacle types:
+// 0=single spike, 1=double spike, 2=tall spike
+// 3=platform (landable block), 4=ramp (auto-launch), 5=saw blade (spinning)
+// 6=platform+spike (platform with spike on top)
+#define GAME_MAX_OBS     8
 #define GAME_MAX_PARTS  20
 #define GAME_MAX_STARS  18
 #define GAME_MAX_COLS    6
@@ -25,6 +29,7 @@ struct Obstacle {
     float x;
     int   halfW, h, type;
     bool  active, scored;
+    float rot;  // for saw blade spin
 };
 static Obstacle gameObs[GAME_MAX_OBS];
 
@@ -133,18 +138,57 @@ static void gameSpawnObstacle() {
     for (int i = 0; i < GAME_MAX_OBS; i++) {
         if (!gameObs[i].active) {
             gameObs[i].x = 245;
+            gameObs[i].rot = 0;
             int r = random(100);
+
             if (gameScore < 5) {
+                // Early game: only single spikes
                 gameObs[i].type = 0;
-            } else if (gameScore < 15) {
-                gameObs[i].type = (r < 70) ? 0 : 1;
+            } else if (gameScore < 10) {
+                // Introduce double spikes
+                gameObs[i].type = (r < 65) ? 0 : 1;
+            } else if (gameScore < 18) {
+                // Add platforms and tall spikes
+                gameObs[i].type = (r < 30) ? 0 : (r < 50) ? 1 : (r < 65) ? 2 : (r < 85) ? 3 : 6;
+            } else if (gameScore < 28) {
+                // Add ramps
+                gameObs[i].type = (r < 20) ? 0 : (r < 35) ? 1 : (r < 48) ? 2 :
+                                  (r < 63) ? 3 : (r < 78) ? 4 : (r < 90) ? 6 : 5;
             } else {
-                gameObs[i].type = (r < 40) ? 0 : (r < 75) ? 1 : 2;
+                // Full mix with saw blades
+                gameObs[i].type = (r < 15) ? 0 : (r < 28) ? 1 : (r < 38) ? 2 :
+                                  (r < 52) ? 3 : (r < 65) ? 4 : (r < 78) ? 5 : 6;
             }
+
             switch (gameObs[i].type) {
-                case 0: gameObs[i].halfW = 7 + random(4); gameObs[i].h = 20 + random(8); break;
-                case 1: gameObs[i].halfW = 14 + random(4); gameObs[i].h = 18 + random(6); break;
-                case 2: gameObs[i].halfW = 6 + random(3); gameObs[i].h = 30 + random(8); break;
+                case 0: // single spike
+                    gameObs[i].halfW = 7 + random(4);
+                    gameObs[i].h = 20 + random(8);
+                    break;
+                case 1: // double spike
+                    gameObs[i].halfW = 14 + random(4);
+                    gameObs[i].h = 18 + random(6);
+                    break;
+                case 2: // tall spike
+                    gameObs[i].halfW = 6 + random(3);
+                    gameObs[i].h = 30 + random(8);
+                    break;
+                case 3: // platform (safe to land on)
+                    gameObs[i].halfW = 16 + random(10); // wide block
+                    gameObs[i].h = 22 + random(12);     // height above ground
+                    break;
+                case 4: // ramp (auto-launch)
+                    gameObs[i].halfW = 14 + random(6);  // base width
+                    gameObs[i].h = 16 + random(8);      // ramp height
+                    break;
+                case 5: // saw blade (spinning, lethal)
+                    gameObs[i].halfW = 8 + random(4);   // radius
+                    gameObs[i].h = 30 + random(30);     // center height above ground
+                    break;
+                case 6: // platform with spike on top
+                    gameObs[i].halfW = 14 + random(8);
+                    gameObs[i].h = 18 + random(10);
+                    break;
             }
             gameObs[i].active = true;
             gameObs[i].scored = false;
@@ -165,6 +209,34 @@ static void gameDeathExplosion() {
     }
 }
 
+// Helper: check spike triangle collision (returns true if hit)
+static bool checkSpikeCollision(float pLeft, float pRight, float pBottom,
+                                 float tipX, int halfW, int h) {
+    float tLeft  = tipX - halfW;
+    float tRight = tipX + halfW;
+    float tTop   = GAME_GROUND_Y - h;
+    if (pRight <= tLeft || pLeft >= tRight || pBottom <= tTop) return false;
+    float overlapMid = (max(pLeft, tLeft) + min(pRight, tRight)) / 2.0f;
+    float distEdge = min(overlapMid - tLeft, tRight - overlapMid);
+    float triTopAtX = GAME_GROUND_Y - h * distEdge / (float)halfW;
+    return pBottom > triTopAtX + 4;
+}
+
+// Helper: check spike on top of a platform (spike sits at platTop)
+static bool checkPlatSpikeCollision(float pLeft, float pRight, float pBottom, float pTop,
+                                     float platX, int platHW, int platTop) {
+    int spikeH = 12;
+    int spikeHW = 5;
+    float tipX = platX;
+    float sTop = platTop - spikeH;
+    float sLeft = tipX - spikeHW, sRight = tipX + spikeHW;
+    if (pRight <= sLeft || pLeft >= sRight || pBottom <= sTop || pTop >= platTop) return false;
+    float overlapMid = (max(pLeft, sLeft) + min(pRight, sRight)) / 2.0f;
+    float distEdge = min(overlapMid - sLeft, sRight - overlapMid);
+    float triTopAtX = platTop - spikeH * distEdge / (float)spikeHW;
+    return pBottom > triTopAtX + 3;
+}
+
 void updateGame() {
     if (gameState != GAME_PLAYING) {
         if (gameState == GAME_OVER) {
@@ -179,10 +251,74 @@ void updateGame() {
         return;
     }
 
+    // ── Physics ──
     gameVelY += GAME_GRAVITY;
     gamePlayerY += gameVelY;
+
+    // Check platform landings (types 3 and 6) — before ground check
+    float prevBottom = gamePlayerY + GAME_PLAYER_SZ * 2;
+    bool landedOnPlatform = false;
+    for (int i = 0; i < GAME_MAX_OBS; i++) {
+        if (!gameObs[i].active) continue;
+        if (gameObs[i].type != 3 && gameObs[i].type != 6) continue;
+        float ox = gameObs[i].x;
+        int hw = gameObs[i].halfW;
+        int oh = gameObs[i].h;
+        float platTop = GAME_GROUND_Y - oh;
+        float platLeft = ox - hw, platRight = ox + hw;
+        float pLeft = GAME_PLAYER_X - GAME_PLAYER_SZ;
+        float pRight = GAME_PLAYER_X + GAME_PLAYER_SZ;
+
+        // Player must overlap horizontally and be falling onto the top
+        if (pRight > platLeft + 2 && pLeft < platRight - 2 &&
+            gameVelY >= 0 && prevBottom >= platTop && prevBottom < platTop + gameVelY + 6) {
+            gamePlayerY = platTop - GAME_PLAYER_SZ * 2;
+            if (!gameOnGround) {
+                gameLandMs = millis();
+                gameSquash = 0.7f;
+            }
+            gameVelY = 0;
+            gameOnGround = true;
+            gameCanDouble = false;
+            gamePlayerRot = 0;
+            landedOnPlatform = true;
+            break;
+        }
+    }
+
+    // Check ramp interaction (type 4) — auto-launch
+    for (int i = 0; i < GAME_MAX_OBS; i++) {
+        if (!gameObs[i].active || gameObs[i].type != 4) continue;
+        float ox = gameObs[i].x;
+        int hw = gameObs[i].halfW;
+        int oh = gameObs[i].h;
+        float rampLeft = ox - hw, rampRight = ox;
+        float pCenterX = GAME_PLAYER_X;
+        float pBottom = gamePlayerY + GAME_PLAYER_SZ * 2;
+
+        if (pCenterX > rampLeft && pCenterX < rampRight + 4) {
+            // Ramp slope: height increases linearly from left (0) to right (oh)
+            float frac = (pCenterX - rampLeft) / (float)hw;
+            float rampSurfaceY = GAME_GROUND_Y - oh * frac;
+            if (pBottom >= rampSurfaceY - 2 && pBottom <= rampSurfaceY + 8 && gameVelY >= 0) {
+                // Launch! Stronger than a normal jump
+                gameVelY = GAME_JUMP_VEL * 1.2f;
+                gameOnGround = false;
+                gameCanDouble = true;
+                gamePlayerRot = -0.3f;
+                // Ramp particles
+                for (int p = 0; p < 3; p++) {
+                    gameSpawnParticle(pCenterX, pBottom,
+                        -1.0f + random(200)/100.0f, -2.0f - random(100)/100.0f,
+                        COL_YELLOW, 6);
+                }
+            }
+        }
+    }
+
+    // Ground check
     float groundPos = GAME_GROUND_Y - GAME_PLAYER_SZ * 2;
-    if (gamePlayerY >= groundPos) {
+    if (!landedOnPlatform && gamePlayerY >= groundPos) {
         gamePlayerY = groundPos;
         if (!gameOnGround) {
             gameLandMs = millis();
@@ -201,6 +337,7 @@ void updateGame() {
         if (gameSquash > 1.0f) gameSquash = 1.0f;
     }
 
+    // Trail particles
     if (!gameOnGround && random(3) == 0) {
         gameSpawnParticle(
             GAME_PLAYER_X - GAME_PLAYER_SZ + random(4),
@@ -209,6 +346,7 @@ void updateGame() {
             gameAccentCol, 6 + random(4));
     }
 
+    // Update particles
     for (int i = 0; i < GAME_MAX_PARTS; i++) {
         if (!gameParts[i].active) continue;
         gameParts[i].x += gameParts[i].vx;
@@ -217,6 +355,7 @@ void updateGame() {
         if (--gameParts[i].life <= 0) gameParts[i].active = false;
     }
 
+    // Update stars
     for (int i = 0; i < GAME_MAX_STARS; i++) {
         gameStars[i].x -= gameSpeed * gameStars[i].speed;
         if (gameStars[i].x < -2) {
@@ -225,6 +364,7 @@ void updateGame() {
         }
     }
 
+    // Update bg columns
     for (int i = 0; i < GAME_MAX_COLS; i++) {
         gameBgCols[i].x -= gameSpeed * gameBgCols[i].speed;
         if (gameBgCols[i].x + gameBgCols[i].w < -5) {
@@ -236,10 +376,12 @@ void updateGame() {
 
     gameBgScroll += gameSpeed;
 
+    // ── Move obstacles & score ──
     for (int i = 0; i < GAME_MAX_OBS; i++) {
         if (!gameObs[i].active) continue;
         gameObs[i].x -= gameSpeed;
-        if (gameObs[i].x < -30) { gameObs[i].active = false; continue; }
+        if (gameObs[i].type == 5) gameObs[i].rot += 0.25f; // spin saw blades
+        if (gameObs[i].x < -40) { gameObs[i].active = false; continue; }
         if (!gameObs[i].scored && gameObs[i].x < GAME_PLAYER_X - GAME_PLAYER_SZ) {
             gameObs[i].scored = true;
             gameScore++;
@@ -258,6 +400,7 @@ void updateGame() {
 
     if (gameFlashTimer > 0) gameFlashTimer--;
 
+    // ── Spawn ──
     gameSpawnDist -= gameSpeed;
     if (gameSpawnDist <= 0) {
         gameSpawnObstacle();
@@ -266,7 +409,7 @@ void updateGame() {
         gameSpawnDist = minGap + random((int)maxGap - (int)minGap);
     }
 
-    // Collision detection
+    // ── Collision detection ──
     int sz = GAME_PLAYER_SZ;
     float pLeft   = GAME_PLAYER_X - sz + 4;
     float pRight  = GAME_PLAYER_X + sz - 4;
@@ -278,40 +421,89 @@ void updateGame() {
         float ox = gameObs[i].x;
         int hw = gameObs[i].halfW;
         int oh = gameObs[i].h;
+        bool hit = false;
 
-        if (gameObs[i].type == 1) {
-            for (int s = -1; s <= 1; s += 2) {
+        switch (gameObs[i].type) {
+        case 0: // single spike
+        case 2: // tall spike
+            hit = checkSpikeCollision(pLeft, pRight, pBottom, ox, hw, oh);
+            break;
+
+        case 1: // double spike
+            for (int s = -1; s <= 1 && !hit; s += 2) {
                 float sx = ox + s * (hw / 2.0f);
-                int shw = hw / 3;
-                float tLeft = sx - shw, tRight = sx + shw;
-                float tTop = GAME_GROUND_Y - oh;
-                if (pRight <= tLeft || pLeft >= tRight || pBottom <= tTop) continue;
-                float overlapMid = (max(pLeft, tLeft) + min(pRight, tRight)) / 2.0f;
-                float distEdge = min(overlapMid - tLeft, tRight - overlapMid);
-                float triTopAtX = GAME_GROUND_Y - oh * distEdge / (float)shw;
-                if (pBottom > triTopAtX + 4) {
-                    gameState = GAME_OVER;
-                    if (gameScore > gameHiScore) { gameHiScore = gameScore; saveGameHiScore(); }
-                    gameDeathExplosion();
-                    chimeDeath();
-                    return;
+                hit = checkSpikeCollision(pLeft, pRight, pBottom, sx, hw / 3, oh);
+            }
+            break;
+
+        case 3: // platform — side collision only (top is landable)
+        {
+            float platTop = GAME_GROUND_Y - oh;
+            float platLeft = ox - hw, platRight = ox + hw;
+            // Side hit: player overlaps horizontally AND vertically but not from top
+            if (pRight > platLeft && pLeft < platRight &&
+                pBottom > platTop + 6 && pTop < GAME_GROUND_Y) {
+                // Only die if hitting the side (not landing from above)
+                if (pRight > platLeft && pRight < platLeft + gameSpeed + 4 && pBottom > platTop + 6) {
+                    hit = true; // hit left wall
                 }
             }
-        } else {
-            float tLeft  = ox - hw;
-            float tRight = ox + hw;
-            float tTop   = GAME_GROUND_Y - oh;
-            if (pRight <= tLeft || pLeft >= tRight || pBottom <= tTop) continue;
-            float overlapMid = (max(pLeft, tLeft) + min(pRight, tRight)) / 2.0f;
-            float distEdge = min(overlapMid - tLeft, tRight - overlapMid);
-            float triTopAtX = GAME_GROUND_Y - oh * distEdge / (float)hw;
-            if (pBottom > triTopAtX + 4) {
-                gameState = GAME_OVER;
-                if (gameScore > gameHiScore) { gameHiScore = gameScore; saveGameHiScore(); }
-                gameDeathExplosion();
-                chimeDeath();
-                return;
+            break;
+        }
+
+        case 6: // platform with spike on top
+        {
+            float platTop = GAME_GROUND_Y - oh;
+            float platLeft = ox - hw, platRight = ox + hw;
+            // Side collision
+            if (pRight > platLeft && pRight < platLeft + gameSpeed + 4 &&
+                pBottom > platTop + 6 && pTop < GAME_GROUND_Y) {
+                hit = true;
             }
+            // Spike on top collision
+            if (!hit) {
+                hit = checkPlatSpikeCollision(pLeft, pRight, pBottom, pTop,
+                                               ox, hw, (int)platTop);
+            }
+            break;
+        }
+
+        case 4: // ramp — side collision (slope is handled in physics above)
+        {
+            float rampLeft = ox - hw;
+            float rampRight = ox;
+            float rampTop = GAME_GROUND_Y - oh;
+            // Only kill if hitting the vertical right face of the ramp
+            if (pRight > rampRight - 2 && pLeft < rampRight + 2 &&
+                pBottom > rampTop + 4 && pTop < GAME_GROUND_Y) {
+                // Don't kill if player is above the ramp
+                if (pBottom > rampTop + oh / 2) hit = true;
+            }
+            break;
+        }
+
+        case 5: // saw blade — circle collision
+        {
+            float sawCX = ox;
+            float sawCY = GAME_GROUND_Y - oh; // center y
+            float sawR = hw;
+            // Closest point on player rect to circle center
+            float closestX = max(pLeft, min(sawCX, pRight));
+            float closestY = max(pTop, min(sawCY, pBottom));
+            float dx = sawCX - closestX, dy = sawCY - closestY;
+            if (dx * dx + dy * dy < (sawR - 2) * (sawR - 2)) {
+                hit = true;
+            }
+            break;
+        }
+        }
+
+        if (hit) {
+            gameState = GAME_OVER;
+            if (gameScore > gameHiScore) { gameHiScore = gameScore; saveGameHiScore(); }
+            gameDeathExplosion();
+            chimeDeath();
+            return;
         }
     }
 }
@@ -538,31 +730,127 @@ void drawGameScreen() {
         int hw = gameObs[i].halfW;
         int oh = gameObs[i].h;
 
-        uint16_t obsCol, obsHighlight;
         switch (gameObs[i].type) {
-            case 0: obsCol = COL_RED;     obsHighlight = COL_ORANGE;  break;
-            case 1: obsCol = COL_MAGENTA; obsHighlight = COL_LIGHT_BLUE; break;
-            case 2: obsCol = COL_ORANGE;  obsHighlight = COL_YELLOW;  break;
-            default: obsCol = COL_RED;    obsHighlight = COL_ORANGE;  break;
-        }
+        case 0: // single spike
+            spr.fillTriangle(ox, GAME_GROUND_Y - oh, ox - hw, GAME_GROUND_Y, ox + hw, GAME_GROUND_Y, COL_RED);
+            spr.drawLine(ox, GAME_GROUND_Y - oh, ox - hw, GAME_GROUND_Y, COL_ORANGE);
+            spr.drawLine(ox, GAME_GROUND_Y - oh, ox + hw, GAME_GROUND_Y, COL_RED);
+            if (oh > 22)
+                spr.drawLine(ox, GAME_GROUND_Y - oh + 3, ox - hw + 3, GAME_GROUND_Y, COL_ORANGE);
+            break;
 
-        if (gameObs[i].type == 1) {
-            int gap = hw / 2;
-            int shw = hw / 3;
+        case 1: // double spike
+        {
+            int gap = hw / 2, shw = hw / 3;
             for (int s = -1; s <= 1; s += 2) {
                 int sx = ox + s * gap;
-                spr.fillTriangle(sx, GAME_GROUND_Y - oh, sx - shw, GAME_GROUND_Y, sx + shw, GAME_GROUND_Y, obsCol);
-                spr.drawLine(sx, GAME_GROUND_Y - oh, sx - shw, GAME_GROUND_Y, obsHighlight);
-                spr.drawLine(sx, GAME_GROUND_Y - oh, sx + shw, GAME_GROUND_Y, obsCol);
+                spr.fillTriangle(sx, GAME_GROUND_Y - oh, sx - shw, GAME_GROUND_Y, sx + shw, GAME_GROUND_Y, COL_MAGENTA);
+                spr.drawLine(sx, GAME_GROUND_Y - oh, sx - shw, GAME_GROUND_Y, COL_LIGHT_BLUE);
+                spr.drawLine(sx, GAME_GROUND_Y - oh, sx + shw, GAME_GROUND_Y, COL_MAGENTA);
             }
-        } else {
-            spr.fillTriangle(ox, GAME_GROUND_Y - oh, ox - hw, GAME_GROUND_Y, ox + hw, GAME_GROUND_Y, obsCol);
-            spr.drawLine(ox, GAME_GROUND_Y - oh, ox - hw, GAME_GROUND_Y, obsHighlight);
-            spr.drawLine(ox, GAME_GROUND_Y - oh, ox + hw, GAME_GROUND_Y, obsCol);
-            if (oh > 22) {
-                spr.drawLine(ox, GAME_GROUND_Y - oh + 3, ox - hw + 3, GAME_GROUND_Y, obsHighlight);
-            }
+            break;
         }
+
+        case 2: // tall spike
+            spr.fillTriangle(ox, GAME_GROUND_Y - oh, ox - hw, GAME_GROUND_Y, ox + hw, GAME_GROUND_Y, COL_ORANGE);
+            spr.drawLine(ox, GAME_GROUND_Y - oh, ox - hw, GAME_GROUND_Y, COL_YELLOW);
+            spr.drawLine(ox, GAME_GROUND_Y - oh, ox + hw, GAME_GROUND_Y, COL_ORANGE);
+            spr.drawLine(ox, GAME_GROUND_Y - oh + 3, ox - hw + 3, GAME_GROUND_Y, COL_YELLOW);
+            break;
+
+        case 3: // platform (landable block)
+        {
+            int platTop = GAME_GROUND_Y - oh;
+            // Main block
+            spr.fillRect(ox - hw, platTop, hw * 2, oh, COL_TEAL);
+            spr.drawRect(ox - hw, platTop, hw * 2, oh, COL_CYAN);
+            // Top surface highlight
+            spr.drawFastHLine(ox - hw + 1, platTop, hw * 2 - 2, COL_GREEN);
+            spr.drawFastHLine(ox - hw + 1, platTop + 1, hw * 2 - 2, COL_CYAN);
+            // Brick lines
+            for (int by = platTop + 8; by < GAME_GROUND_Y; by += 8) {
+                spr.drawFastHLine(ox - hw + 2, by, hw * 2 - 4, COL_DARK_GRAY);
+            }
+            break;
+        }
+
+        case 6: // platform with spike on top
+        {
+            int platTop = GAME_GROUND_Y - oh;
+            // Block
+            spr.fillRect(ox - hw, platTop, hw * 2, oh, COL_TEAL);
+            spr.drawRect(ox - hw, platTop, hw * 2, oh, COL_CYAN);
+            spr.drawFastHLine(ox - hw + 1, platTop, hw * 2 - 2, COL_GREEN);
+            // Brick lines
+            for (int by = platTop + 8; by < GAME_GROUND_Y; by += 8) {
+                spr.drawFastHLine(ox - hw + 2, by, hw * 2 - 4, COL_DARK_GRAY);
+            }
+            // Spike on top
+            int spikeH = 12, spikeHW = 5;
+            spr.fillTriangle(ox, platTop - spikeH,
+                             ox - spikeHW, platTop,
+                             ox + spikeHW, platTop, COL_RED);
+            spr.drawLine(ox, platTop - spikeH, ox - spikeHW, platTop, COL_ORANGE);
+            break;
+        }
+
+        case 4: // ramp (right triangle, slope going up-left to right)
+        {
+            int rampTop = GAME_GROUND_Y - oh;
+            // Filled right triangle: left-bottom, right-bottom, right-top
+            spr.fillTriangle(ox - hw, GAME_GROUND_Y,  // left base
+                             ox, GAME_GROUND_Y,        // right base
+                             ox, rampTop,               // right peak
+                             COL_GOLD);
+            // Slope highlight
+            spr.drawLine(ox - hw, GAME_GROUND_Y, ox, rampTop, COL_YELLOW);
+            // Right edge
+            spr.drawFastVLine(ox, rampTop, oh, COL_ORANGE);
+            // Arrow chevrons on slope surface
+            for (int c = 0; c < 3; c++) {
+                int cx = ox - hw + (hw / 4) * (c + 1);
+                float frac = (float)(cx - (ox - hw)) / (float)hw;
+                int cy = GAME_GROUND_Y - (int)(oh * frac);
+                spr.drawLine(cx - 2, cy + 3, cx, cy, COL_WHITE);
+                spr.drawLine(cx, cy, cx + 2, cy + 3, COL_WHITE);
+            }
+            break;
+        }
+
+        case 5: // saw blade (spinning circle)
+        {
+            int sawCX = ox;
+            int sawCY = GAME_GROUND_Y - oh;
+            int sawR = hw;
+            // Support pole from ground to blade
+            spr.drawFastVLine(sawCX, sawCY + sawR, GAME_GROUND_Y - sawCY - sawR, COL_MID_GRAY);
+            spr.drawFastVLine(sawCX + 1, sawCY + sawR, GAME_GROUND_Y - sawCY - sawR, COL_DARK_GRAY);
+            // Outer circle
+            spr.fillCircle(sawCX, sawCY, sawR, COL_MID_GRAY);
+            spr.drawCircle(sawCX, sawCY, sawR, COL_RED);
+            spr.drawCircle(sawCX, sawCY, sawR - 1, COL_ORANGE);
+            // Inner hub
+            spr.fillCircle(sawCX, sawCY, 3, COL_WHITE);
+            // Spinning teeth/spokes
+            float rot = gameObs[i].rot;
+            for (int t = 0; t < 6; t++) {
+                float a = rot + t * (3.14159f / 3.0f);
+                int tx1 = sawCX + (int)(4 * cosf(a));
+                int ty1 = sawCY + (int)(4 * sinf(a));
+                int tx2 = sawCX + (int)((sawR - 1) * cosf(a));
+                int ty2 = sawCY + (int)((sawR - 1) * sinf(a));
+                spr.drawLine(tx1, ty1, tx2, ty2, COL_RED);
+            }
+            // Teeth notches on edge
+            for (int t = 0; t < 8; t++) {
+                float a = rot + t * (3.14159f / 4.0f);
+                int nx = sawCX + (int)((sawR + 2) * cosf(a));
+                int ny = sawCY + (int)((sawR + 2) * sinf(a));
+                spr.fillCircle(nx, ny, 2, COL_RED);
+            }
+            break;
+        }
+        } // switch
     }
 
     // Player

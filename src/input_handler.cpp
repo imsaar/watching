@@ -8,10 +8,19 @@
 #include "screen_timer.h"
 #include "screen_pomodoro.h"
 #include "screen_game.h"
+#include "screen_info.h"
 #include <WiFi.h>
 #include <time.h>
 
 void handleButtons() {
+    // ── Info screen — any button dismisses ──
+    if (showInfoScreen) {
+        if (buttons[0].pressed || buttons[1].pressed || buttons[2].pressed) {
+            showInfoScreen = false;
+        }
+        return;
+    }
+
     // ── Alarm ringing — global intercept ──
     if (alarmRinging) {
         if (buttons[0].pressed) {
@@ -275,6 +284,15 @@ void handleButtons() {
         buttons[1].holdFired = true;
         stopwatchElapsed = 0;
         chimeBack();
+    }
+
+    // Long-press SETTINGS on clock screen → show info
+    if (buttons[1].holding && !buttons[1].holdFired &&
+        (millis() - buttons[1].holdStart > HOLD_MS) &&
+        currentScreen == SCREEN_CLOCK && WiFi.status() == WL_CONNECTED) {
+        buttons[1].holdFired = true;
+        chimeSettings();
+        showInfoScreen = true;
     }
 
     if (buttons[0].pressed) {

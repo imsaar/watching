@@ -18,11 +18,13 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
     -   **Alarm**: Configurable alarm with continuous Space Invaders-style melody. Configurable snooze duration (0-15 minutes, 0 disables snooze). Alarm auto-switches to the alarm screen when triggered, with Snooze (NEXT) and Stop (BACK) options. Snooze countdown re-triggers the alarm when it expires.
     -   **Stopwatch**: High-precision stopwatch with millisecond display. Start/stop with SETTINGS button, long-press SETTINGS to reset when stopped.
 -   **Geometry Dash Game**:
-    -   Endless runner with a jumping square dodging pointy triangle obstacles.
-    -   Three obstacle types: single spikes, double spikes, and tall spikes.
+    -   Endless runner with a jumping square dodging obstacles and navigating terrain.
+    -   Seven obstacle types introduced progressively: single spikes, double spikes, tall spikes, landable platforms, platforms with spikes, launch ramps, and spinning saw blades.
+    -   Platforms you can land and run on; ramps that auto-launch you upward with a speed boost.
+    -   Saw blades on poles with spinning teeth at varying heights.
     -   Double-jump ability with visual ring indicator.
     -   Multi-layer parallax background: scrolling city silhouettes, star streaks at high speed, and perspective ground lines.
-    -   Particle effects: jump dust, airborne trail, score sparkle, and death explosion.
+    -   Particle effects: jump dust, airborne trail, ramp launch sparks, score sparkle, and death explosion.
     -   Player rotation while airborne with squash/stretch on landing.
     -   Color theme progression every 10 points through 6 palettes.
     -   Speed ramps with milestone flash effects; speed capped for fairness.
@@ -42,6 +44,11 @@ A functional and stylish smart watch built with an ESP32-C3 SuperMini and a roun
 -   **Persistent Settings**:
     -   Alarm configuration, game high score, and Pomodoro intervals are saved to non-volatile storage (ESP32 NVS) and survive power cycles.
     -   Settings save automatically when exiting configuration screens or setting a new high score.
+-   **OTA Updates**:
+    -   **ArduinoOTA**: Flash over WiFi from PlatformIO — `pio run -t upload --upload-port <IP>`.
+    -   **ElegantOTA**: Upload firmware via any web browser at `http://<IP>/update`.
+    -   Progress bar displayed on watch during OTA upload.
+    -   **Info screen**: Long-press SETTINGS on clock face to view firmware version, IP address, OTA URL, and free memory.
 -   **Connectivity**:
     -   Automatic WiFi connection for NTP time synchronization and weather fetching.
     -   Dynamic updates for weather data every 10 minutes.
@@ -75,6 +82,7 @@ This project is developed using **PlatformIO** and the **Arduino** framework.
 ### Dependencies
 -   [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI) - Optimized display driver.
 -   [ArduinoJson](https://arduinojson.org/) - For parsing weather data.
+-   [ElegantOTA](https://github.com/ayushsharma82/ElegantOTA) - Web-based OTA firmware updates.
 
 ### Configuration
 The display and SPI pins are configured via `build_flags` in `platformio.ini`. No manual `User_Setup.h` editing is required if using the provided configuration.
@@ -119,6 +127,8 @@ src/
   weather.h/.cpp     — Weather data, Open-Meteo API fetch, weather icons
   wifi_ntp.h/.cpp    — WiFi connection and NTP time sync
   storage.h/.cpp     — NVS persistence for user settings
+  ota.h/.cpp         — ArduinoOTA and ElegantOTA setup
+  screen_info.h/.cpp — Info overlay (version, IP, OTA URL, memory)
   screen_clock.h/.cpp    — Watch face screen
   screen_weather.h/.cpp  — Weather dashboard screen
   screen_timer.h/.cpp    — Analog clock, alarm, and stopwatch screen
