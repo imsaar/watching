@@ -2,6 +2,7 @@
 #include "config.h"
 #include "globals.h"
 #include <WiFi.h>
+#include <esp_ota_ops.h>
 
 bool showInfoScreen = false;
 
@@ -13,14 +14,21 @@ void drawInfoScreen() {
     spr.setTextColor(COL_CYAN, COL_BG);
     spr.drawString("Watch Info", 120, 28, 4);
 
-    int y = 58;
-    int spacing = 20;
+    int y = 55;
+    int spacing = 18;
 
-    // Firmware version
+    // Firmware version + partition
     spr.setTextColor(COL_MID_GRAY, COL_BG);
     spr.drawString("Firmware", 120, y, 2);
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    char fwBuf[32];
+    if (running) {
+        sprintf(fwBuf, "v" FW_VERSION " (%s)", running->label);
+    } else {
+        sprintf(fwBuf, "v" FW_VERSION);
+    }
     spr.setTextColor(COL_GREEN, COL_BG);
-    spr.drawString("v" FW_VERSION, 120, y + 14, 2);
+    spr.drawString(fwBuf, 120, y + 14, 2);
     y += spacing + 16;
 
     // IP address
@@ -46,17 +54,18 @@ void drawInfoScreen() {
         y += spacing + 16;
     }
 
-    // Free heap
+    // Flash + heap
     spr.setTextColor(COL_MID_GRAY, COL_BG);
-    spr.drawString("Free Memory", 120, y, 2);
+    spr.drawString("Flash / Free RAM", 120, y, 2);
     spr.setTextColor(COL_WHITE, COL_BG);
-    char heapBuf[16];
-    sprintf(heapBuf, "%d bytes", ESP.getFreeHeap());
-    spr.drawString(heapBuf, 120, y + 14, 2);
+    char memBuf[32];
+    sprintf(memBuf, "%dKB / %dKB", ESP.getFlashChipSize() / 1024, ESP.getFreeHeap() / 1024);
+    spr.drawString(memBuf, 120, y + 14, 2);
 
     // Footer
     spr.setTextColor(COL_DARK_GRAY, COL_BG);
-    spr.drawString("Press any button to close", 120, 222, 1);
+    spr.drawString("BACK+NEXT at boot = rollback", 120, 214, 1);
+    spr.drawString("Press any button to close", 120, 226, 1);
 
     spr.pushSprite(0, 0);
 }
