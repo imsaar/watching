@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 // ── Firmware Version ────────────────────────────────────────────
-#define FW_VERSION "1.4.0"
+#define FW_VERSION "1.5.2"
 
 // ── Pin Definitions ──────────────────────────────────────────────
 #define BTN_BACK     0

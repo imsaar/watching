@@ -31,6 +31,8 @@
 #include "storage.h"
 #include "ota.h"
 #include "screen_info.h"
+#include <esp_ota_ops.h>
+#include <esp_sleep.h>
 
 // ── Background watchdog task ──
 // Runs as a FreeRTOS task independent of setup()/loop().
@@ -93,6 +95,33 @@ void setup() {
     // Start watchdog task FIRST — before display, WiFi, or anything that could hang.
     // Provides: emergency 3-button reboot + 30s OTA boot guard.
     xTaskCreate(rebootWatchTask, "reboot", 2048, NULL, 1, NULL);
+
+    // ── OTA partition switch logic ──
+    // Check if boot partition differs from running (OTA wrote to other partition)
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* boot = esp_ota_get_boot_partition();
+    if (running && boot && running->address != boot->address) {
+        printf("[OTA] Boot partition differs — restarting to switch...\n");
+        ESP.restart();  // boots the new partition
+    }
+
+    // On first boot of new OTA partition: state is PENDING_VERIFY.
+    // Validate immediately, then deep sleep to reset SPI2.
+    // On second boot: state is VALID, proceed normally.
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            printf("[OTA] First boot of new firmware — validating + deep sleep...\n");
+            esp_ota_mark_app_valid_cancel_rollback();
+            bootValidated = true;
+            esp_sleep_enable_timer_wakeup(1000);
+            esp_deep_sleep_start();
+        }
+    }
+
+    // Validate app and disarm boot guard
+    esp_ota_mark_app_valid_cancel_rollback();
+    bootValidated = true;
 
     tft.init();
     tft.setRotation(0);
@@ -175,11 +204,7 @@ void setup() {
     updateWeather();
     otaSetup();
 
-    // Mark this firmware as valid — disarms the boot guard timer
-    // and tells the bootloader this OTA image is good (no rollback needed).
-    otaValidateApp();
-    bootValidated = true;
-    printf("[Boot] Setup complete, boot validated.\n");
+    printf("[Boot] Setup complete.\n");
 }
 
 void loop() {
