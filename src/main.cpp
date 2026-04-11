@@ -50,7 +50,17 @@ static void rebootWatchTask(void*) {
                           !digitalRead(BTN_NEXT);
         if (allPressed) {
             if (allHeldSince == 0) allHeldSince = millis();
-            if (millis() - allHeldSince >= 2000) ESP.restart();
+            if (millis() - allHeldSince >= 2000) {
+                // Long descending chime to confirm reboot
+                ledcWriteTone(BUZZER_CH, 1000);
+                delay(200);
+                ledcWriteTone(BUZZER_CH, 600);
+                delay(200);
+                ledcWriteTone(BUZZER_CH, 300);
+                delay(400);
+                ledcWriteTone(BUZZER_CH, 0);
+                ESP.restart();
+            }
         } else {
             allHeldSince = 0;
         }
