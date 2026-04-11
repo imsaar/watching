@@ -151,10 +151,21 @@ If the 3-button reboot doesn't help:
     pio run -t upload
     ```
 
+## ℹ️ Watch Info Screen
+
+Long-press **SETTINGS** on the watch face to open the info screen. It displays:
+-   **Firmware version** and current OTA partition (app0/app1)
+-   **IP address** (or "Not connected" if WiFi is down)
+-   **OTA update URL** for browser-based firmware uploads
+-   **Flash size** and **free RAM**
+-   Hint: hold BACK + NEXT during boot to rollback to previous firmware
+
+Press any button to close.
+
 ## 🎮 Controls
 
 -   **NEXT**: Cycle forward through screens: Watch → Weather → Timer (Clock → Alarm → Stopwatch) → Game → Pomodoro → Watch. Adjusts values in settings. Jumps in Geometry Dash. Snoozes alarm when ringing.
--   **SETTINGS**: Enter/edit alarm settings (hour, minute, on/off, snooze duration), start/stop the stopwatch (long-press to reset), configure Pomodoro, start/retry Geometry Dash, or set time/date manually on the watch face (when WiFi is disconnected).
+-   **SETTINGS**: Enter/edit alarm settings (hour, minute, on/off, snooze duration), start/stop the stopwatch (long-press to reset), configure Pomodoro, start/retry Geometry Dash, or set time/date manually on the watch face (when WiFi is disconnected). Long-press on watch face for info screen.
 -   **BACK**: Navigate to the previous screen, pause/quit the game, stop the alarm, or exit settings. In Pomodoro: start/pause/resume the timer (long-press to reset).
 
 ## 📁 Project Structure
