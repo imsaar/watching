@@ -135,8 +135,11 @@ pio run
 # Output: .pio/build/esp32-c3-devkitm-1/firmware.bin
 ```
 
+### Emergency Reboot
+Hold all 3 buttons (**BACK** + **SETTINGS** + **NEXT**) for 2 seconds. A descending chime confirms the reboot.
+
 ### Recovery (crash loop or bricked device)
-If the device is unresponsive:
+If the 3-button reboot doesn't help:
 1. Hold the **BOOT** button, press **RESET**, release **BOOT** (enters bootloader mode).
 2. Flash manually:
     ```bash
