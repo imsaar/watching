@@ -20,6 +20,7 @@ static unsigned long gameLandMs = 0;
 // 0=single spike, 1=double spike, 2=tall spike
 // 3=platform (landable block), 4=ramp (auto-launch), 5=saw blade (spinning)
 // 6=platform+spike (platform with spike on top)
+// 7=slope (hill that rises and falls), 8=staircase (ascending steps)
 #define GAME_MAX_OBS     8
 #define GAME_MAX_PARTS  20
 #define GAME_MAX_STARS  18
@@ -148,16 +149,19 @@ static void gameSpawnObstacle() {
                 // Introduce double spikes
                 gameObs[i].type = (r < 65) ? 0 : 1;
             } else if (gameScore < 18) {
-                // Add platforms and tall spikes
-                gameObs[i].type = (r < 30) ? 0 : (r < 50) ? 1 : (r < 65) ? 2 : (r < 85) ? 3 : 6;
+                // Add platforms, tall spikes, and slopes
+                gameObs[i].type = (r < 25) ? 0 : (r < 42) ? 1 : (r < 55) ? 2 :
+                                  (r < 72) ? 3 : (r < 85) ? 7 : 6;
             } else if (gameScore < 28) {
-                // Add ramps
-                gameObs[i].type = (r < 20) ? 0 : (r < 35) ? 1 : (r < 48) ? 2 :
-                                  (r < 63) ? 3 : (r < 78) ? 4 : (r < 90) ? 6 : 5;
-            } else {
-                // Full mix with saw blades
+                // Add ramps and staircases
                 gameObs[i].type = (r < 15) ? 0 : (r < 28) ? 1 : (r < 38) ? 2 :
-                                  (r < 52) ? 3 : (r < 65) ? 4 : (r < 78) ? 5 : 6;
+                                  (r < 50) ? 3 : (r < 62) ? 4 : (r < 74) ? 7 :
+                                  (r < 86) ? 8 : 6;
+            } else {
+                // Full mix with saw blades, slopes, staircases
+                gameObs[i].type = (r < 10) ? 0 : (r < 20) ? 1 : (r < 28) ? 2 :
+                                  (r < 40) ? 3 : (r < 50) ? 4 : (r < 60) ? 5 :
+                                  (r < 70) ? 6 : (r < 82) ? 7 : 8;
             }
 
             switch (gameObs[i].type) {
@@ -188,6 +192,14 @@ static void gameSpawnObstacle() {
                 case 6: // platform with spike on top
                     gameObs[i].halfW = 14 + random(8);
                     gameObs[i].h = 18 + random(10);
+                    break;
+                case 7: // slope (hill)
+                    gameObs[i].halfW = 18 + random(8);  // half-width of hill
+                    gameObs[i].h = 20 + random(10);     // peak height
+                    break;
+                case 8: // staircase
+                    gameObs[i].halfW = 16 + random(6);  // total width / 2
+                    gameObs[i].h = 3 + random(2);       // number of steps (3-4)
                     break;
             }
             gameObs[i].active = true;
@@ -255,34 +267,56 @@ void updateGame() {
     gameVelY += GAME_GRAVITY;
     gamePlayerY += gameVelY;
 
-    // Check platform landings (types 3 and 6) — before ground check
+    // Check platform landings (types 3, 6, and 8 staircase) — before ground check
     float prevBottom = gamePlayerY + GAME_PLAYER_SZ * 2;
     bool landedOnPlatform = false;
     for (int i = 0; i < GAME_MAX_OBS; i++) {
         if (!gameObs[i].active) continue;
-        if (gameObs[i].type != 3 && gameObs[i].type != 6) continue;
+        if (gameObs[i].type != 3 && gameObs[i].type != 6 && gameObs[i].type != 8) continue;
         float ox = gameObs[i].x;
         int hw = gameObs[i].halfW;
         int oh = gameObs[i].h;
-        float platTop = GAME_GROUND_Y - oh;
-        float platLeft = ox - hw, platRight = ox + hw;
         float pLeft = GAME_PLAYER_X - GAME_PLAYER_SZ;
         float pRight = GAME_PLAYER_X + GAME_PLAYER_SZ;
 
-        // Player must overlap horizontally and be falling onto the top
-        if (pRight > platLeft + 2 && pLeft < platRight - 2 &&
-            gameVelY >= 0 && prevBottom >= platTop && prevBottom < platTop + gameVelY + 6) {
-            gamePlayerY = platTop - GAME_PLAYER_SZ * 2;
-            if (!gameOnGround) {
-                gameLandMs = millis();
-                gameSquash = 0.7f;
+        if (gameObs[i].type == 8) {
+            // Staircase: check landing on each step
+            int numSteps = oh;
+            int totalW = hw * 2;
+            int stepW = totalW / numSteps;
+            int stepH = 8;
+            for (int s = numSteps - 1; s >= 0; s--) {
+                float sLeft = ox - hw + s * stepW;
+                float sRight = sLeft + stepW;
+                float sTop = GAME_GROUND_Y - (s + 1) * stepH;
+                if (pRight > sLeft + 2 && pLeft < sRight - 2 &&
+                    gameVelY >= 0 && prevBottom >= sTop && prevBottom < sTop + gameVelY + 6) {
+                    gamePlayerY = sTop - GAME_PLAYER_SZ * 2;
+                    if (!gameOnGround) { gameLandMs = millis(); gameSquash = 0.7f; }
+                    gameVelY = 0;
+                    gameOnGround = true;
+                    gameCanDouble = false;
+                    gamePlayerRot = 0;
+                    landedOnPlatform = true;
+                    break;
+                }
             }
-            gameVelY = 0;
-            gameOnGround = true;
-            gameCanDouble = false;
-            gamePlayerRot = 0;
-            landedOnPlatform = true;
-            break;
+            if (landedOnPlatform) break;
+        } else {
+            float platTop = GAME_GROUND_Y - oh;
+            float platLeft = ox - hw, platRight = ox + hw;
+            // Player must overlap horizontally and be falling onto the top
+            if (pRight > platLeft + 2 && pLeft < platRight - 2 &&
+                gameVelY >= 0 && prevBottom >= platTop && prevBottom < platTop + gameVelY + 6) {
+                gamePlayerY = platTop - GAME_PLAYER_SZ * 2;
+                if (!gameOnGround) { gameLandMs = millis(); gameSquash = 0.7f; }
+                gameVelY = 0;
+                gameOnGround = true;
+                gameCanDouble = false;
+                gamePlayerRot = 0;
+                landedOnPlatform = true;
+                break;
+            }
         }
     }
 
@@ -493,6 +527,53 @@ void updateGame() {
             float dx = sawCX - closestX, dy = sawCY - closestY;
             if (dx * dx + dy * dy < (sawR - 2) * (sawR - 2)) {
                 hit = true;
+            }
+            break;
+        }
+
+        case 7: // slope (hill) — triangle collision, same shape as a wide spike
+        {
+            // Symmetrical hill: peak at ox, base from ox-hw to ox+hw
+            float hillTop = GAME_GROUND_Y - oh;
+            float hillLeft = ox - hw, hillRight = ox + hw;
+            if (pRight > hillLeft && pLeft < hillRight && pBottom > hillTop) {
+                // Check against both slope faces
+                float midX = (max(pLeft, hillLeft) + min(pRight, hillRight)) / 2.0f;
+                float slopeY;
+                if (midX <= ox) {
+                    // Left slope: rises from left to peak
+                    float frac = (midX - hillLeft) / (float)hw;
+                    slopeY = GAME_GROUND_Y - oh * frac;
+                } else {
+                    // Right slope: falls from peak to right
+                    float frac = (hillRight - midX) / (float)hw;
+                    slopeY = GAME_GROUND_Y - oh * frac;
+                }
+                if (pBottom > slopeY + 4) hit = true;
+            }
+            break;
+        }
+
+        case 8: // staircase — multi-step collision
+        {
+            int numSteps = oh; // h stores step count
+            int totalW = hw * 2;
+            int stepW = totalW / numSteps;
+            int stepH = 8; // height per step
+            for (int s = 0; s < numSteps && !hit; s++) {
+                float sLeft = ox - hw + s * stepW;
+                float sRight = sLeft + stepW;
+                float sTop = GAME_GROUND_Y - (s + 1) * stepH;
+                // Side collision: hit the front face of a step
+                if (pRight > sLeft && pRight < sLeft + gameSpeed + 4 &&
+                    pBottom > sTop + 3 && pTop < GAME_GROUND_Y) {
+                    hit = true;
+                }
+                // Top collision: player lands on step but hits body
+                if (!hit && pRight > sLeft + 2 && pLeft < sRight - 2 &&
+                    pBottom > sTop && pBottom < sTop + 6 && gameVelY >= 0) {
+                    // This is a landing — don't kill, handled below
+                }
             }
             break;
         }
@@ -847,6 +928,50 @@ void drawGameScreen() {
                 int nx = sawCX + (int)((sawR + 2) * cosf(a));
                 int ny = sawCY + (int)((sawR + 2) * sinf(a));
                 spr.fillCircle(nx, ny, 2, COL_RED);
+            }
+            break;
+        }
+
+        case 7: // slope (hill)
+        {
+            int hillTop = GAME_GROUND_Y - oh;
+            // Filled hill triangle
+            spr.fillTriangle(ox - hw, GAME_GROUND_Y, ox, hillTop, ox + hw, GAME_GROUND_Y, COL_TEAL);
+            // Left slope edge
+            spr.drawLine(ox - hw, GAME_GROUND_Y, ox, hillTop, COL_GREEN);
+            // Right slope edge
+            spr.drawLine(ox, hillTop, ox + hw, GAME_GROUND_Y, COL_CYAN);
+            // Peak highlight
+            spr.fillCircle(ox, hillTop, 2, COL_WHITE);
+            // Horizontal stripes for texture
+            for (int sy = hillTop + 6; sy < GAME_GROUND_Y; sy += 6) {
+                float frac = (float)(GAME_GROUND_Y - sy) / (float)oh;
+                int lineHW = (int)(hw * (1.0f - frac));
+                spr.drawFastHLine(ox - lineHW + 1, sy, lineHW * 2 - 2, COL_DARK_GRAY);
+            }
+            break;
+        }
+
+        case 8: // staircase (ascending steps)
+        {
+            int numSteps = oh; // h stores step count
+            int totalW = hw * 2;
+            int stepW = totalW / numSteps;
+            int stepH = 8;
+            for (int s = 0; s < numSteps; s++) {
+                int sLeft = ox - hw + s * stepW;
+                int sTop = GAME_GROUND_Y - (s + 1) * stepH;
+                int sHeight = (s + 1) * stepH;
+                // Fill step
+                spr.fillRect(sLeft, sTop, stepW, sHeight, COL_ORANGE);
+                // Step outline
+                spr.drawRect(sLeft, sTop, stepW, sHeight, COL_YELLOW);
+                // Top surface highlight
+                spr.drawFastHLine(sLeft + 1, sTop, stepW - 2, COL_WHITE);
+                // Grip lines on step top
+                for (int g = 2; g < stepW - 2; g += 4) {
+                    spr.drawPixel(sLeft + g, sTop + 1, COL_RED);
+                }
             }
             break;
         }
