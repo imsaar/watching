@@ -108,13 +108,44 @@ The display and SPI pins are configured via `build_flags` in `platformio.ini`. N
     ```
     > **Note**: The first flash after cloning (or after changing `partitions.csv`) must be via USB so the new partition table is written. Subsequent updates can use OTA.
 
-5.  **Recovery (exception loop)**: If the device is crash-looping and `pio run -t upload` fails, hold the **BOOT** button, press **RESET**, release **BOOT**, then flash manually:
+## 🔄 Updating Firmware
+
+### USB (first flash or recovery)
+Connect the ESP32-C3 via USB and run:
+```bash
+pio run -t upload
+```
+> The first flash after cloning (or after changing `partitions.csv`) must be via USB so the new partition table is written.
+
+### OTA via CLI
+After the initial USB flash, update wirelessly from the command line:
+```bash
+./ota-upload.sh <IP>
+```
+This builds the firmware and uploads it via the ElegantOTA HTTP endpoint. The device reboots automatically.
+
+### OTA via Browser
+1. Open `http://<IP>/update` in any web browser.
+2. Select the `.bin` firmware file and click **Upload Firmware**.
+3. The device reboots automatically after upload.
+
+To build the `.bin` file without flashing:
+```bash
+pio run
+# Output: .pio/build/esp32-c3-devkitm-1/firmware.bin
+```
+
+### Recovery (crash loop or bricked device)
+If the device is unresponsive:
+1. Hold the **BOOT** button, press **RESET**, release **BOOT** (enters bootloader mode).
+2. Flash manually:
     ```bash
-    esptool --chip esp32c3 --port /dev/cu.usbmodem1101 write_flash \
-      0x0     .pio/build/esp32-c3-devkitm-1/bootloader.bin \
-      0x8000  .pio/build/esp32-c3-devkitm-1/partitions.bin \
-      0xe000  ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
-      0x10000 .pio/build/esp32-c3-devkitm-1/firmware.bin
+    pio run -t upload
+    ```
+3. If that fails, full erase + flash:
+    ```bash
+    esptool --chip esp32c3 erase_flash
+    pio run -t upload
     ```
 
 ## 🎮 Controls
